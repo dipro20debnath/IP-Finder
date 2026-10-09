@@ -620,7 +620,7 @@ python -m ipfinder update-lists                       # Tor, cloud ranges, Priva
 | **1. Core + Offline** ✅ | ৩–৪ দিন | Validator, L1 (classify, CGNAT, embedded IPv4, EUI-64), models, CLI skeleton | Private/CGNAT/IPv6 test সব pass |
 | **2. Geo + Network** ✅ (code ও test; আসল API-তে প্রথম চালানো বাকি) | ১ সপ্তাহ | ip-api (single+batch), IPinfo Lite, MaxMind, Team Cymru, PeeringDB; rate limiter; cache | `quick` profile কাজ করে; 45/min limit কখনো ভাঙে না |
 | **3. Registry + Routing + DNS** ✅ (code ও test; আসল API-তে প্রথম চালানো বাকি) | ১ সপ্তাহ | RDAP, RIPEstat (prefix, RPKI, neighbours, abuse), PTR + FCrDNS, Geofeed | Abuse email ও RPKI status দেখায় |
-| **4. Anonymity + Exposure** | ১ সপ্তাহ | Cloud ranges, Tor, Private Relay, VPN-ASN list, InternetDB; `update-lists` | Tor exit IP সঠিকভাবে চিহ্নিত হয় |
+| **4. Anonymity + Exposure** ✅ (code ও test; AWS ও X4BNet list live দিয়ে যাচাই) | ১ সপ্তাহ | Cloud ranges, Tor, Private Relay, VPN-ASN list, InternetDB; `update-lists` | Tor exit IP সঠিকভাবে চিহ্নিত হয় |
 | **5. Threat Intel** | ১ সপ্তাহ | AbuseIPDB, GreyNoise, VirusTotal, OTX, abuse.ch, Spamhaus DQS | Key না থাকলে provider "skipped (no key)" দেখায়, crash করে না |
 | **6. Analysis Engine** | ১ সপ্তাহ | Consensus, classification, confidence, reputation/exposure score, anycast | Score-গুলোর unit test আছে |
 | **7. Active Mode** | ৩–৪ দিন | Ping, traceroute, TLS cert, RTT plausibility; confirmation prompt | `--active` ছাড়া কখনো চলে না |

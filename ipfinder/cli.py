@@ -6,6 +6,8 @@
     ipfinder lookup 8.8.8.8 --profile quick --no-cache
     ipfinder me            (your own public IP)
     ipfinder sources
+    ipfinder update-lists  (Tor, cloud, Private Relay, VPN lists; GeoLite2 with a key)
+    ipfinder update-lists tor-exits --force | ipfinder update-lists --status
     ipfinder cache info | ipfinder cache clear
     ipfinder 8.8.8.8       (shorthand for "lookup")
     ipfinder               (interactive prompt, like v1.0)
@@ -14,7 +16,7 @@ Reports go to stdout; prompts, status lines and errors go to stderr, so
 "ipfinder -f json > out.json" always produces valid JSON.
 
 Exit codes: 0 success, 1 at least one input was not a valid IP (or "me" could
-not find your public IP),
+not find your public IP, or a list download failed),
 2 usage error (bad option, unreadable input file, unwritable output file),
 3 internal error, 130 interrupted (Ctrl+C).
 """
@@ -41,14 +43,19 @@ from ipfinder.core.config import PROFILES, Config
 from ipfinder.core.orchestrator import analyze_many
 from ipfinder.core.session import Session
 from ipfinder.core.text import display_safe
+from ipfinder.lists.maxmind import update_maxmind
+from ipfinder.lists.specs import SPECS
+from ipfinder.lists.store import ListStore
 from ipfinder.output import json_out, terminal
 from ipfinder.providers import PLANNED_PROVIDERS, default_providers
 from ipfinder.providers.base import ProviderError
 from ipfinder.providers.ipapi import public_ip
+from ipfinder.providers.list_base import ListProvider
 
 EXIT_OK, EXIT_INVALID_INPUT, EXIT_USAGE, EXIT_INTERNAL = 0, 1, 2, 3
 EXIT_INTERRUPTED = 130
-COMMANDS = ("lookup", "me", "sources", "cache")
+COMMANDS = ("lookup", "me", "sources", "cache", "update-lists")
+LIST_NAMES = (*SPECS, "maxmind")
 
 
 def _build_parser() -> argparse.ArgumentParser:
@@ -87,6 +94,20 @@ def _build_parser() -> argparse.ArgumentParser:
     sub.add_parser("sources", help="show data sources, their status and API-key needs")
     cache = sub.add_parser("cache", help="show or clear the local lookup cache")
     cache.add_argument("action", choices=("info", "clear"))
+    update = sub.add_parser(
+        "update-lists",
+        help="download Tor, cloud, Private Relay and VPN lists (and GeoLite2 with a MaxMind key)",
+    )
+    update.add_argument(
+        "names", nargs="*", metavar="NAME", help=f"only these lists: {', '.join(LIST_NAMES)}"
+    )
+    update.add_argument(
+        "--force", action="store_true", help="download even if the local copy is still fresh"
+    )
+    update.add_argument(
+        "--status", action="store_true", help="only show what is downloaded and how old it is"
+    )
+    update.add_argument("--no-color", action="store_true", help="disable colours")
     return parser
 
 
@@ -256,7 +277,14 @@ def _cmd_sources(console: Console) -> int:
     for p in default_providers():
         reason = p.unavailable_reason(full)
         status = Text("ready", style="green") if reason is None else Text(reason, style="yellow")
-        needs = p.requires_key or ("GeoLite2 .mmdb files" if p.required_files(config) else "-")
+        if p.requires_key:
+            needs = p.requires_key
+        elif p.required_files(config):
+            needs = "GeoLite2 .mmdb files"
+        elif isinstance(p, ListProvider):
+            needs = "ipfinder update-lists"
+        else:
+            needs = "-"
         table.add_row(p.name, p.layer, ", ".join(p.profiles), status, needs)
     for p in PLANNED_PROVIDERS:
         if p.key is None:
@@ -268,6 +296,91 @@ def _cmd_sources(console: Console) -> int:
         table.add_row(p.name, p.layer, "-", Text(f"planned (Phase {p.phase})", style="dim"), needs)
     console.print(table)
     return EXIT_OK
+
+
+def _list_row(table: Table, name: str, info: dict | None, result: Text) -> None:
+    info = info or {}
+    downloaded = "-"
+    if info.get("fetched"):
+        downloaded = f"{info['fetched']} ({info['age_hours']:g} h ago)"
+    entries = info.get("entries")
+    table.add_row(
+        name,
+        f"{entries:,}" if isinstance(entries, int) else "-",
+        display_safe(str(info.get("published") or "-")),
+        downloaded,
+        result,
+    )
+
+
+async def _update_lists(config: Config, names: list[str], force: bool) -> list[dict]:
+    async with Session(config) as session:
+        limit = asyncio.Semaphore(4)
+
+        async def one(name: str) -> dict:
+            async with limit:
+                return await session.lists.update(SPECS[name], session, force)
+
+        results = list(await asyncio.gather(*(one(n) for n in names if n in SPECS)))
+        if "maxmind" in names:
+            results += await update_maxmind(session, config, force)
+        return results
+
+
+def _cmd_update_lists(args, console: Console, messages: Console) -> int:
+    unknown = [n for n in args.names if n not in LIST_NAMES]
+    if unknown:
+        messages.print(
+            Text(
+                f"[!] Unknown list: {display_safe(', '.join(unknown))}. "
+                f"Choose from: {', '.join(LIST_NAMES)}",
+                style="red",
+            )
+        )
+        return EXIT_USAGE
+    config = Config.load(use_cache=False)
+    names = list(dict.fromkeys(args.names)) or list(LIST_NAMES)
+    store = ListStore(config.lists_dir)
+    table = Table(title=f"Lists in {config.lists_dir}")
+    for column in ("List", "Entries", "List date", "Downloaded", "Result"):
+        table.add_column(column, overflow="fold")
+
+    if args.status:
+        for name in names:
+            if name == "maxmind":
+                for path in (config.maxmind_city_db, config.maxmind_asn_db):
+                    state = "present" if Path(path).is_file() else "missing"
+                    table.add_row(f"maxmind {Path(path).name}", "-", "-", "-", Text(state))
+                continue
+            spec = SPECS[name]
+            info = store.info(spec)
+            if info is None:
+                result = Text("not downloaded", style="yellow")
+            elif info["stale"]:
+                result = Text("stale: run update-lists", style="yellow")
+            else:
+                result = Text("ok", style="green")
+            _list_row(table, name, info, result)
+        console.print(table)
+        return EXIT_OK
+
+    messages.print(Text(f"Downloading {len(names)} list(s) into {config.lists_dir} ..."))
+    results = asyncio.run(_update_lists(config, names, args.force))
+    failed = False
+    for item in results:
+        status = item["status"]
+        if status == "updated":
+            result = Text("updated", style="green")
+        elif status == "fresh":
+            result = Text("already fresh", style="dim")
+        elif status == "skipped":
+            result = Text(f"skipped: {item.get('error')}", style="dim")
+        else:
+            failed = True
+            result = Text(f"failed: {display_safe(str(item.get('error')))}", style="red")
+        _list_row(table, item["name"], item, result)
+    console.print(table)
+    return EXIT_INVALID_INPUT if failed else EXIT_OK
 
 
 def _harden_streams() -> None:
@@ -301,6 +414,8 @@ def main(argv: list[str] | None = None) -> int:
             return _cmd_sources(console)
         if args.command == "cache":
             return _cmd_cache(args, console)
+        if args.command == "update-lists":
+            return _cmd_update_lists(args, console, messages)
         if args.command == "me":
             return _cmd_me(args, console, messages)
         return _cmd_lookup(args, console, messages)

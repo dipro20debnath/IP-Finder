@@ -1,5 +1,5 @@
 """Everything shared by the lookups of one run: settings, HTTP client, DNS resolver,
-cache, rate limiters and opened databases."""
+cache, rate limiters, opened databases and downloaded lists."""
 
 from __future__ import annotations
 
@@ -12,6 +12,7 @@ from ipfinder.core.cache import Cache
 from ipfinder.core.config import Config
 from ipfinder.core.dns import resolve_records as default_dns_resolve
 from ipfinder.core.ratelimit import RateLimiter
+from ipfinder.lists.store import ListStore
 
 USER_AGENT = f"ip-finder/{__version__} (+https://github.com/dipro20debnath/IP-Finder)"
 
@@ -40,6 +41,7 @@ class Session:
             cache if cache is not None else Cache(config.cache_path if config.use_cache else None)
         )
         self.dns_resolve = dns_resolve or default_dns_resolve
+        self.lists = ListStore(config.lists_dir)  # downloaded lists, parsed on first use
         self.resources: dict[str, Any] = {}  # e.g. opened MaxMind readers
         self._limiters: dict[str, RateLimiter] = {}
 

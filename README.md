@@ -1,10 +1,63 @@
-# IP Finder v2 (Phase 0–3)
+# IP Finder v2 (Phase 0–4)
 
 একটি IP address থেকে **আইনসঙ্গতভাবে যা যা জানা সম্ভব**, তা ধাপে ধাপে বের করার Python tool। পুরো roadmap: [ADVANCED_PLAN.md](ADVANCED_PLAN.md)।
 
-এই version-এ আছে **Phase 0 (setup)**, **Phase 1 (offline analysis)**, **Phase 2 (location ও network: ip-api, IPinfo Lite, MaxMind GeoLite2, Team Cymru, PeeringDB)** আর **Phase 3 (registry, routing ও DNS: RDAP, RIPEstat BGP/RPKI, reverse DNS + FCrDNS, Geofeed)**। কোনো API key ছাড়াই চলে; key বা database যোগ করলে আরও source যুক্ত হয়। Anonymity (Tor, VPN, cloud range) আসবে Phase 4-এ।
+এই version-এ আছে **Phase 0 (setup)**, **Phase 1 (offline analysis)**, **Phase 2 (location ও network: ip-api, IPinfo Lite, MaxMind GeoLite2, Team Cymru, PeeringDB)**, **Phase 3 (registry, routing ও DNS: RDAP, RIPEstat BGP/RPKI, reverse DNS + FCrDNS, Geofeed)** আর **Phase 4 (anonymity ও exposure: Tor exit, iCloud Private Relay, cloud/CDN range, VPN/datacenter list, Shodan InternetDB; `update-lists`)**। কোনো API key ছাড়াই চলে; key বা database যোগ করলে আরও source যুক্ত হয়। Threat intelligence (AbuseIPDB, GreyNoise…) আসবে Phase 5-এ।
 
 > ⚠️ IP geolocation আনুমানিক। একটি IP address কোনো ব্যক্তিকে শনাক্ত করে না।
+
+---
+
+## Phase 4: anonymity, hosting ও exposed service
+
+| Source | কী দেয় | কোথা থেকে | কত ঘন ঘন বদলায় |
+|---|---|---|---|
+| **Tor exit list** | Address-টা Tor exit relay কিনা, relay-র fingerprint, শেষ কবে exit হিসেবে দেখা গেছে, Tor Relay Search link | Tor Project: `torbulkexitlist` ও `exit-addresses` | প্রতি ঘণ্টায় (৬ ঘণ্টার পুরোনো হলে সতর্ক করে) |
+| **iCloud Private Relay** | Apple-এর egress address কিনা, আর Apple কোন এলাকার user-দের জন্য সেটা ব্যবহার করে | Apple: `egress-ip-ranges.csv` (RFC 8805) | Apple নিয়মিত বদলায় |
+| **Cloud / CDN range** | AWS (region ও service যেমন EC2), Google Cloud (region), Google-এর নিজস্ব service, Azure (region ও service tag), Oracle Cloud, Cloudflare, Fastly | প্রতিটা কোম্পানির নিজের প্রকাশ করা list | দিনে বা সপ্তাহে |
+| **VPN / datacenter list** | পরিচিত VPN provider-এর network (যেমন M247, Mullvad, ProtonVPN-এর ASN) আর datacenter network (home বা mobile line নয়) | [X4BNet lists_vpn](https://github.com/X4BNet/lists_vpn) (MIT licence): IPv4 block আর ASN list (ASN দিয়ে IPv6-ও ধরা পড়ে) | মাঝে মাঝে |
+| **Shodan InternetDB** | খোলা port, software (CPE), সম্ভাব্য CVE, tag, hostname; ঝুঁকিপূর্ণ port (Telnet, SMB, RDP, VNC, Redis, MongoDB…) আলাদা করে দেখায় | `internetdb.shodan.io/{ip}`, key লাগে না | Shodan সাপ্তাহিক update করে |
+
+**List download করা:** Lookup নিজে কখনো বড় list download করে না। সেটা করে আলাদা command:
+
+```bash
+ipfinder update-lists              # সব list (আর .env-এ MaxMind key থাকলে GeoLite2-ও)
+ipfinder update-lists tor-exits    # শুধু একটা
+ipfinder update-lists --force      # তাজা হলেও আবার নামাও
+ipfinder update-lists --status     # কোনটা আছে, কত পুরোনো
+```
+
+- Download করা file আগে পুরোপুরি parse করে যাচাই করা হয়, তারপর পুরোনোটার জায়গায় বসে। ফলে error page বা আধা-নামা file কখনো ভালো list নষ্ট করে না।
+- যে list তাজা (যেমন Tor ৩০ মিনিটের কম পুরোনো, AWS ১২ ঘণ্টার কম), `--force` ছাড়া সেটা আবার নামানো হয় না।
+- Azure-এর file-এর নাম প্রতি সপ্তাহে বদলায়, তাই Microsoft-এর download page থেকে আসল link খুঁজে নেওয়া হয়। Page-এর গঠন বদলালে পরিষ্কার error দেখায়।
+- **MaxMind:** `.env`-এ `MAXMIND_ACCOUNT_ID` আর `MAXMIND_LICENSE_KEY` থাকলে GeoLite2 City ও ASN download হয়। পদ্ধতিটা MaxMind-এর নিজের `geoipupdate` tool-এর source code মিলিয়ে বানানো। নতুন build না থাকলে (MD5 মিলে গেলে) কিছু নামায় না, আর download-এর checksum মিলিয়ে দেখে।
+
+**সৎ সীমাবদ্ধতা:**
+- Tor-এর list-এ IPv6 address নেই, তাই IPv6 Tor exit চেনা যায় না। Report-এ সেটা বলা থাকে।
+- VPN list community-র বানানো। List-এ থাকা মানে "এই network VPN হিসেবে পরিচিত", কোনো নির্দিষ্ট connection VPN দিয়ে এসেছে তার প্রমাণ নয়। List-এ নেই এমন VPN ধরা পড়ে না।
+- Private Relay VPN নয়। একটা egress address অনেক Apple user ভাগ করে নেয়।
+- InternetDB-র CVE-এর মধ্যে software version দেখে অনুমান করা (unverified) CVE-ও আছে, আর data সাপ্তাহিক snapshot, live নয়। InternetDB শুধু non-commercial কাজে free।
+
+### আসল output (সংক্ষেপিত): AWS ও X4BNet-এর live list দিয়ে
+
+এই environment থেকে AWS-এর `ip-ranges.json` (17,570 prefix) আর X4BNet-এর list সত্যিই download করা গেছে। নিচের ফল সেই আসল list থেকে। Tor, Apple, Google, Azure, Oracle, Cloudflare, Fastly আর Shodan-এর server এখান থেকে পৌঁছানো যায়নি, তাই সেগুলোর code test হয়েছে documentation-এর format দিয়ে।
+
+```text
+$ ipfinder update-lists aws vpn-networks datacenter-networks vpn-asns datacenter-asns
+│ aws                 │ 17,570  │ 2026-10-09 15:37:06 UTC │ 2026-10-09 19:16 UTC (0 h ago) │ updated │
+│ vpn-networks        │ 11,054  │ -                       │ 2026-10-09 19:16 UTC (0 h ago) │ updated │
+│ datacenter-networks │ 44,471  │ -                       │ 2026-10-09 19:16 UTC (0 h ago) │ updated │
+
+$ ipfinder 3.80.1.1
+│ Anonymity and hosting (local lists)
+│   Cloud / CDN          Amazon Web Services - us-east-1 - EC2 (3.80.0.0/12)
+│   Listed VPN network   no
+│   Listed datacenter    yes - 3.64.0.0/10
+
+$ ipfinder 2.26.157.1
+│   Listed VPN network   yes - 2.26.157.0/24
+│   Listed datacenter    yes - 2.26.157.0/24
+```
 
 ---
 
@@ -72,7 +125,7 @@
 | **Team Cymru** | BGP-তে announce করা prefix, origin ASN, RIR, allocation date, AS name | লাগে না (DNS) | Fair use |
 | **PeeringDB** | ASN-টা কেমন network: ISP / Content / Education, scope, peering policy | ঐচ্ছিক `PEERINGDB_API_KEY` | ASN জানা গেলে তবেই চলে |
 
-- **Cache:** online উত্তর `data/cache.sqlite`-এ জমা থাকে (reverse DNS ১ ঘণ্টা, RIPEstat ৬ ঘণ্টা, ip-api, IPinfo, Team Cymru ও Geofeed ১ দিন, RDAP, RDAP bootstrap ও PeeringDB ৭ দিন), তাই একই IP বারবার দেখলে free quota খরচ হয় না।
+- **Cache:** online উত্তর `data/cache.sqlite`-এ জমা থাকে (reverse DNS ১ ঘণ্টা, RIPEstat ৬ ঘণ্টা, ip-api, IPinfo, Team Cymru, Geofeed ও InternetDB ১ দিন, RDAP, RDAP bootstrap ও PeeringDB ৭ দিন; local list-এর ফল cache হয় না, সবসময় সর্বশেষ list থেকে আসে), তাই একই IP বারবার দেখলে free quota খরচ হয় না।
 - **Rate limiter:** ip-api-র ৪৫/মিনিট সীমা কখনো পার হয় না। নিরাপত্তার জন্য ০.৫ সেকেন্ড margin রাখা আছে, আর `X-Rl`/`X-Ttl` header ও HTTP 429 মানা হয়। একাধিক IP দিলে ip-api-র batch endpoint ব্যবহার হয়।
 - **একাধিক source পাশাপাশি:** দেশ বা ASN নিয়ে source-গুলো একমত না হলে সতর্কবার্তা দেখায়। MaxMind-এর "registered country" আর "location country" আলাদা হলেও জানায়।
 - **Map ও সময়:** OpenStreetMap ও Google Maps link (accuracy radius থাকায় MaxMind-কে প্রাধান্য), আর ওই এলাকার এখনকার local time।
@@ -183,17 +236,19 @@ ipfinder lookup --profile quick 8.8.8.8   # শুধু offline + ip-api (দ�
 ipfinder lookup --no-cache 8.8.8.8        # cache না পড়ে, না লিখে
 ipfinder me                               # নিজের public IP
 ipfinder sources                          # প্রতিটা source প্রস্তুত কি না, কী লাগবে
+ipfinder update-lists                     # Tor, cloud, Private Relay, VPN list (+ GeoLite2)
+ipfinder update-lists --status            # কোন list আছে, কত পুরোনো
 ipfinder cache info                       # cache-এ কী আছে
 ipfinder cache clear                      # cache মুছে ফেলা
 ipfinder                                  # v1.0-এর মতো interactive prompt
 python -m ipfinder 8.8.8.8                # repo folder থেকে, rich install থাকলে
 ```
 
-**Exit codes:** `0` সফল, `1` অন্তত একটি input বৈধ IP নয় (বা `me` নিজের IP খুঁজে পায়নি), `2` usage ভুল (ভুল option, input file পড়া যায়নি, output file লেখা যায়নি), `3` internal error, `130` Ctrl+C।
+**Exit codes:** `0` সফল, `1` অন্তত একটি input বৈধ IP নয় (বা `me` নিজের IP খুঁজে পায়নি, বা `update-lists`-এ কোনো list নামানো যায়নি), `2` usage ভুল (ভুল option, input file পড়া যায়নি, output file লেখা যায়নি), `3` internal error, `130` Ctrl+C।
 
 Report যায় **stdout**-এ। Prompt, status ও error বার্তা যায় **stderr**-এ, তাই `ipfinder -f json > out.json` সবসময় বৈধ JSON দেয়। Input file UTF-8 (BOM সহ বা ছাড়া) বা UTF-16 হতে পারে, যেমন Windows PowerShell-এর তৈরি file।
 
-**কোন folder থেকে চালাবেন:** `.env`, `data/` folder-এর database আর `data/cache.sqlite` **যে folder থেকে command চালাচ্ছেন সেখান থেকে** পড়া হয় (সাধারণত repo-র root)। অন্য জায়গা থেকে চালালে `IPFINDER_MAXMIND_CITY_DB`, `IPFINDER_MAXMIND_ASN_DB`, `IPFINDER_OUI_DB`, `IPFINDER_CACHE` দিয়ে path দিন।
+**কোন folder থেকে চালাবেন:** `.env`, `data/` folder-এর database আর `data/cache.sqlite` **যে folder থেকে command চালাচ্ছেন সেখান থেকে** পড়া হয় (সাধারণত repo-র root)। অন্য জায়গা থেকে চালালে `IPFINDER_MAXMIND_CITY_DB`, `IPFINDER_MAXMIND_ASN_DB`, `IPFINDER_OUI_DB`, `IPFINDER_CACHE`, `IPFINDER_LISTS_DIR` দিয়ে path দিন।
 
 ### আসল output (সংক্ষেপিত): Teredo address থেকে লুকানো client IP ও port
 
@@ -244,7 +299,7 @@ $ ipfinder fe80::21a:2bff:fe3c:4d5e%eth0
 ```text
 IP-Finder/
 ├── ipfinder/
-│   ├── cli.py                  # argparse CLI (lookup, me, sources, cache)
+│   ├── cli.py                  # argparse CLI (lookup, me, sources, cache, update-lists)
 │   ├── core/
 │   │   ├── validator.py        # input → validated address, helpful errors
 │   │   ├── text.py             # version-independent IPv6 text, safe display of input
@@ -255,6 +310,7 @@ IP-Finder/
 │   │   ├── cache.py            # memory + SQLite cache with per-provider TTL
 │   │   ├── ratelimit.py        # sliding-window limiter + server-driven pauses
 │   │   ├── http.py             # JSON requests, capped downloads; errors never contain the URL/token
+│   │   ├── errors.py           # ProviderError (shared, no imports)
 │   │   ├── dns.py              # TXT / PTR / A / AAAA lookups (dnspython)
 │   │   └── orchestrator.py     # stage 0 offline → stage 1 sources → stage 2 (PeeringDB, Geofeed)
 │   ├── providers/
@@ -269,8 +325,19 @@ IP-Finder/
 │   │   ├── ripestat.py         # RIPEstat: BGP, RPKI, visibility, neighbours, abuse
 │   │   ├── reverse_dns.py      # PTR + forward-confirmed reverse DNS
 │   │   ├── geofeed.py          # operator-published location (RFC 8805 / 9632)
+│   │   ├── list_base.py        # base for providers that answer from downloaded lists
+│   │   ├── tor.py              # Tor exit relay check
+│   │   ├── private_relay.py    # iCloud Private Relay egress check
+│   │   ├── cloud_ranges.py     # AWS / Google / Azure / Oracle / Cloudflare / Fastly
+│   │   ├── vpn_lists.py        # X4BNet VPN and datacenter networks (by prefix and ASN)
+│   │   ├── internetdb.py       # Shodan InternetDB: ports, CPEs, possible CVEs
 │   │   ├── common.py           # shared normalisation helpers
-│   │   └── __init__.py         # registry + planned providers (Phase 4–7)
+│   │   └── __init__.py         # registry + planned providers (Phase 5–7)
+│   ├── lists/
+│   │   ├── specs.py            # every downloadable list: URL, format, parser, freshness
+│   │   ├── index.py            # longest-prefix lookup (300k prefixes load in ~1-1.5 s, lookups in microseconds)
+│   │   ├── store.py            # data/lists/: safe replace-after-validate downloads + metadata
+│   │   └── maxmind.py          # GeoLite2 download (same protocol as geoipupdate)
 │   ├── analysis/
 │   │   ├── addressing.py       # representations, IPv4 class, multicast, Python flags
 │   │   ├── ipv6_insights.py    # embedded IPv4, EUI-64/ISATAP, structure, multicast
@@ -330,7 +397,8 @@ python scripts/capture_fixtures.py 8.8.8.8 --only ip-api rdap   # IP আগে, 
 | 1 | Validator, L1 offline analysis, models, CLI | ✅ |
 | 2 | ip-api, IPinfo Lite, MaxMind, Team Cymru, PeeringDB; cache, rate limiter | ✅ (code ও test; আসল API-তে প্রথম চালানো বাকি) |
 | 3 | RDAP, RIPEstat (BGP/RPKI), DNS/FCrDNS, Geofeed | ✅ (code ও test; আসল API-তে প্রথম চালানো বাকি) |
-| 4–10 | Anonymity, threat intel, scoring, active mode, reports, dashboard | ⏳ |
+| 4 | Tor, Private Relay, cloud range, VPN/datacenter list, InternetDB; `update-lists` | ✅ (code ও test; AWS ও X4BNet list live দিয়ে যাচাই, বাকি source আপনার computer-এ প্রথম চালানো বাকি) |
+| 5–10 | Threat intel, scoring, active mode, reports, dashboard | ⏳ |
 
 `ipfinder sources` চালালে প্রতিটি data source-এর phase ও API-key অবস্থা দেখা যায়।
 

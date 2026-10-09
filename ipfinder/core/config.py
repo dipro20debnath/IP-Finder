@@ -13,6 +13,7 @@ from pathlib import Path
 
 KNOWN_KEYS = (
     "IPINFO_TOKEN",
+    "MAXMIND_ACCOUNT_ID",
     "MAXMIND_LICENSE_KEY",
     "PEERINGDB_API_KEY",
     "ABUSEIPDB_API_KEY",
@@ -96,6 +97,7 @@ _PATH_SETTINGS = {
     "IPFINDER_CACHE": "cache_path",
     "IPFINDER_MAXMIND_CITY_DB": "maxmind_city_db",
     "IPFINDER_MAXMIND_ASN_DB": "maxmind_asn_db",
+    "IPFINDER_LISTS_DIR": "lists_dir",
 }
 
 
@@ -109,6 +111,7 @@ class Config:
     cache_path: Path = Path("data/cache.sqlite")
     maxmind_city_db: Path = Path("data/GeoLite2-City.mmdb")
     maxmind_asn_db: Path = Path("data/GeoLite2-ASN.mmdb")
+    lists_dir: Path = Path("data/lists")  # Tor, cloud, Private Relay, VPN lists
     api_keys: Mapping[str, str] = field(default_factory=dict)
 
     @classmethod

@@ -11,16 +11,21 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 from ipfinder.providers.base import Provider
+from ipfinder.providers.cloud_ranges import CloudRangesProvider
 from ipfinder.providers.cymru import TeamCymruProvider
 from ipfinder.providers.geofeed import GeofeedProvider
+from ipfinder.providers.internetdb import InternetDBProvider
 from ipfinder.providers.ipapi import IpApiProvider
 from ipfinder.providers.ipinfo_lite import IpinfoLiteProvider
 from ipfinder.providers.maxmind import MaxMindProvider
 from ipfinder.providers.offline import OfflineProvider
 from ipfinder.providers.peeringdb import PeeringDBProvider
+from ipfinder.providers.private_relay import PrivateRelayProvider
 from ipfinder.providers.rdap import RDAPProvider
 from ipfinder.providers.reverse_dns import ReverseDNSProvider
 from ipfinder.providers.ripestat import RIPEstatProvider
+from ipfinder.providers.tor import TorProvider
+from ipfinder.providers.vpn_lists import VPNListsProvider
 
 
 @dataclass(frozen=True)
@@ -42,16 +47,17 @@ def default_providers() -> list[Provider]:
         RDAPProvider(),
         RIPEstatProvider(),
         ReverseDNSProvider(),
+        TorProvider(),
+        PrivateRelayProvider(),
+        CloudRangesProvider(),
+        InternetDBProvider(),
         PeeringDBProvider(),
         GeofeedProvider(),
+        VPNListsProvider(),
     ]
 
 
 PLANNED_PROVIDERS = (
-    PlannedProvider("cloud-ranges", "L7", 4, None, "AWS/GCP/Azure/Cloudflare range match"),
-    PlannedProvider("tor", "L7", 4, None, "Tor exit node list"),
-    PlannedProvider("private-relay", "L7", 4, None, "iCloud Private Relay egress ranges"),
-    PlannedProvider("internetdb", "L8", 4, None, "Shodan InternetDB: ports, CPEs, CVEs"),
     PlannedProvider("abuseipdb", "L9", 5, "ABUSEIPDB_API_KEY", "Abuse confidence score"),
     PlannedProvider("greynoise", "L9", 5, None, "Scanner / benign classification"),
     PlannedProvider("virustotal", "L9", 5, "VIRUSTOTAL_API_KEY", "Vendor verdicts"),

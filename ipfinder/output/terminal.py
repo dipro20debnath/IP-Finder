@@ -216,7 +216,7 @@ def _verbose(data: dict) -> list[Table]:
     return tables
 
 
-_LOCATION_SOURCES = ("geofeed", "maxmind", "ip-api", "ipinfo-lite")
+_LOCATION_SOURCES = ("geofeed", "private-relay", "maxmind", "ip-api", "ipinfo-lite")
 _NETWORK_SOURCES = ("team-cymru", "ripestat", "maxmind", "ipinfo-lite", "ip-api")
 
 
@@ -524,6 +524,158 @@ def _reverse_dns(report: IPReport) -> list[Table]:
     return [_section("Reverse DNS", rows)]
 
 
+def _list_notes(data: dict) -> list[tuple[str, object]]:
+    rows: list[tuple[str, object]] = []
+    for name in data.get("stale", []):
+        age = data.get("lists", {}).get(name, {}).get("age_hours")
+        rows.append(
+            (
+                "Warning",
+                _safe(f"{name} list is {age:g} h old; run: ipfinder update-lists", "yellow"),
+            )
+        )
+    for problem in data.get("problems", []):
+        rows.append(("Warning", _safe(problem, "yellow")))
+    return rows
+
+
+def _anonymity(report: IPReport) -> list[Table]:
+    rows: list[tuple[str, object]] = []
+    notes: list[tuple[str, object]] = []
+    missing: list[str] = []
+
+    tor = _ok(report, "tor")
+    if tor:
+        if tor.get("is_exit"):
+            value = _safe("YES - listed by the Tor Project as an exit relay", "bold yellow")
+            rows.append(("Tor exit", value))
+            for relay in tor.get("relays", [])[:3]:
+                tested = f", seen exiting {relay['tested']}" if relay.get("tested") else ""
+                rows.append(("Tor relay", f"{relay['fingerprint']}{tested}"))
+                rows.append(("", relay["relay_search"]))
+        else:
+            rows.append(("Tor exit", _safe("no (not in the Tor Project's exit lists)", "green")))
+        if tor.get("note"):
+            rows.append(("Note", _safe(tor["note"], "dim")))
+        notes += _list_notes(tor)
+
+    relay = _ok(report, "private-relay")
+    if relay:
+        if relay.get("is_relay"):
+            loc = relay.get("location") or {}
+            place = ", ".join(
+                v for v in (loc.get("city"), loc.get("region_code"), loc.get("country_code")) if v
+            )
+            rows.append(
+                (
+                    "iCloud Private Relay",
+                    _safe(
+                        f"YES - Apple egress address ({relay.get('prefix')})"
+                        + (f" for users around {place}" if place else ""),
+                        "bold yellow",
+                    ),
+                )
+            )
+            rows.append(
+                ("", _safe("shared by many Apple users; a privacy relay, not a VPN service", "dim"))
+            )
+        else:
+            rows.append(("iCloud Private Relay", _safe("no", "green")))
+        notes += _list_notes(relay)
+
+    cloud = _ok(report, "cloud-ranges")
+    if cloud:
+        for match in cloud.get("matches", []):
+            details = [match.get("region"), ", ".join(match.get("services") or []) or None]
+            text = match["provider"] + "".join(f" - {d}" for d in details if d)
+            text += f" ({match['prefix']})"
+            rows.append(("Cloud / CDN", _safe(text, "bold")))
+            if match.get("note"):
+                rows.append(("", _safe(match["note"], "dim")))
+        if not cloud.get("matches"):
+            checked = len(cloud.get("checked", []))
+            rows.append(("Cloud / CDN", f"no match in {checked} provider list(s)"))
+        missing += cloud.get("not_downloaded", [])
+        notes += _list_notes(cloud)
+
+    vpn = _ok(report, "vpn-lists")
+    if vpn:
+        for kind, label in (("vpn", "Listed VPN network"), ("datacenter", "Listed datacenter")):
+            entry = vpn.get(kind) or {}
+            if entry.get("listed"):
+                evidence = "; ".join(
+                    f"{e['value']}" + (f" ({e['name']})" if e.get("name") else "")
+                    for e in entry.get("evidence", [])
+                )
+                rows.append((label, _safe(f"yes - {evidence}", "bold yellow")))
+            else:
+                rows.append((label, _safe("no", "green")))
+        if vpn.get("note"):
+            rows.append(("Note", _safe(vpn["note"], "dim")))
+        notes += _list_notes(vpn)
+
+    if not rows:
+        return []
+    if missing:
+        notes.append(
+            ("Not checked", _safe(f"{', '.join(missing)} (run: ipfinder update-lists)", "dim"))
+        )
+    notes.append(
+        (
+            "Note",
+            Text(
+                "Lists show who operates an address. A Tor exit, relay, VPN or cloud server "
+                "hides the real sender; lists can be out of date and never prove intent.",
+                style="dim",
+            ),
+        )
+    )
+    return [_section("Anonymity and hosting (local lists)", rows + notes)]
+
+
+def _exposure(report: IPReport) -> list[Table]:
+    data = _ok(report, "internetdb")
+    if not data:
+        return []
+    if not data.get("found"):
+        return [
+            _section(
+                "Exposed services (Shodan InternetDB)", [("Result", _safe(data.get("note"), "dim"))]
+            )
+        ]
+    risky = data.get("risky_ports") or []
+    vulns = data.get("vulns") or []
+    rows: list[tuple[str, object]] = [
+        ("Open ports", ", ".join(str(p) for p in data.get("ports", [])) or "none seen"),
+        (
+            "Often-attacked",
+            _safe(", ".join(f"{r['port']} {r['service']}" for r in risky), "bold red")
+            if risky
+            else None,
+        ),
+        ("Software (CPE)", ", ".join(data.get("cpes", [])[:6]) or None),
+        (
+            "Possible CVEs",
+            _safe(
+                f"{len(vulns)}: {', '.join(vulns[:8])}{' ...' if len(vulns) > 8 else ''}", "yellow"
+            )
+            if vulns
+            else None,
+        ),
+        ("Tags", ", ".join(data.get("tags", [])) or None),
+        ("Hostnames", ", ".join(data.get("hostnames", [])[:5]) or None),
+        (
+            "Note",
+            Text(
+                "Weekly snapshot of Shodan's scans, not live. CVEs include unverified ones "
+                "guessed from software versions.",
+                style="dim",
+            ),
+        ),
+    ]
+    return [_section("Exposed services (Shodan InternetDB)", rows)]
+
+
 def _flags(report: IPReport) -> list[Table]:
     data = _ok(report, "ip-api")
     if not data:
@@ -565,7 +717,8 @@ def render_report(report: IPReport, verbose: bool = False) -> Panel:
     data = offline.data
     parts: list = [_summary(report, data)]
     parts += _location(report) + _network(report) + _routing(report)
-    parts += _registration(report) + _abuse(report) + _reverse_dns(report) + _flags(report)
+    parts += _registration(report) + _abuse(report) + _reverse_dns(report)
+    parts += _anonymity(report) + _flags(report) + _exposure(report)
     parts.append(_representations(data))
     parts += _ipv4(data) if report.version == 4 else _ipv6(data)
     parts += _sources(report)
@@ -607,5 +760,9 @@ def print_reports(
                     "ip-api data travelled over plain HTTP (its free tier has no HTTPS).",
                     style="dim",
                 )
+            )
+        if any((r.result("internetdb") or ProviderResult("", "", False)).ok for r in reports):
+            console.print(
+                Text("Shodan InternetDB data is free for non-commercial use only.", style="dim")
             )
         console.print(Text(f"[!] {DISCLAIMER}", style="yellow"))

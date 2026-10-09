@@ -8,14 +8,13 @@ from pathlib import Path
 from typing import Any
 
 from ipfinder.core.config import Config
+from ipfinder.core.errors import ProviderError
 from ipfinder.core.validator import ParsedInput
+
+__all__ = ["DAY", "HOUR", "LookupContext", "Provider", "ProviderError"]
 
 HOUR = 3600
 DAY = 24 * HOUR
-
-
-class ProviderError(Exception):
-    """A provider could not produce data (network error, bad response, quota...)."""
 
 
 @dataclass
