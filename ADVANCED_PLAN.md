@@ -90,6 +90,8 @@ Data source-গুলোর তথ্য (free/key, rate limit, 2025-এর প�
 | IPv6 structure | /48 (site) ও /64 (subnet) prefix আলাদা করে দেখানো |
 
 > ⚠️ **Implementation-এর জরুরি বিষয় (Python 3.13-এ পরীক্ষিত):** Python `2002::/16` (6to4) ও `2001::/32` (Teredo)-কে `is_global == False` ধরে। তাই v1.0-এর মতো "not global হলে বাদ" নিয়ম রাখলে এসব address বাদ পড়ে যাবে। **আগে embedded IPv4 বের করতে হবে, তারপর classify করতে হবে।**
+>
+> **Phase 1-এ পাওয়া আরও তথ্য (Python 3.10–3.14-এ পরীক্ষিত):** Python-এর `is_global` কয়েকটি address-এ IANA registry-র সাথে মেলে না (যেমন `5f00::1` SRv6, `2001:1::3` RFC 9665, `4000::1` unallocated)। Python 3.12.3 `3fff::/20` (RFC 9637) চেনেই না। তাই implementation-এ IANA registry থেকে নিজস্ব table রাখা হয়েছে (`ipfinder/core/special_ranges.py`, বিস্তারিত README-তে)।
 
 ### L2: Geolocation (multi-provider consensus)
 
@@ -282,7 +284,7 @@ IP-Finder/
 ├── ipfinder/
 │   ├── __init__.py
 │   ├── __main__.py            # python -m ipfinder
-│   ├── cli.py                 # typer-based CLI
+│   ├── cli.py                 # argparse CLI
 │   ├── core/
 │   │   ├── models.py          # IPReport, ProviderResult dataclasses
 │   │   ├── validator.py
@@ -394,7 +396,7 @@ class Provider(ABC):
 | `ipwhois` | RDAP parsing |
 | `geoip2` | MaxMind GeoLite2 `.mmdb` পড়া |
 | `rich` | সুন্দর terminal table |
-| `typer` | CLI |
+| `argparse` (built-in) | CLI (extra dependency ছাড়া) |
 | `python-dotenv` | API key `.env` থেকে পড়া |
 | `folium` | HTML map (Leaflet) |
 | `pytest`, `respx` | Test ও HTTP mocking |
@@ -612,8 +614,8 @@ python -m ipfinder update-lists                       # Tor, cloud ranges, Priva
 
 | Phase | সময় | কাজ | Definition of Done |
 |---|---|---|---|
-| **0. Setup ও source যাচাই** | ১–২ দিন | Repo structure, `pyproject.toml`, venv, `.env.example`; প্রতিটি API একবার হাতে চালিয়ে response `tests/fixtures/`-এ সংরক্ষণ | সব source-এর fixture আছে; key-গুলো `.env`-এ, git-এ নয় |
-| **1. Core + Offline** | ৩–৪ দিন | Validator, L1 (classify, CGNAT, embedded IPv4, EUI-64), models, CLI skeleton | Private/CGNAT/IPv6 test সব pass |
+| **0. Setup ও source যাচাই** ✅ | ১–২ দিন | Repo structure, `pyproject.toml`, venv, `.env.example`; প্রতিটি API একবার হাতে চালিয়ে response `tests/fixtures/`-এ সংরক্ষণ | সব source-এর fixture আছে; key-গুলো `.env`-এ, git-এ নয় |
+| **1. Core + Offline** ✅ | ৩–৪ দিন | Validator, L1 (classify, CGNAT, embedded IPv4, EUI-64), models, CLI skeleton | Private/CGNAT/IPv6 test সব pass |
 | **2. Geo + Network** | ১ সপ্তাহ | ip-api (single+batch), IPinfo Lite, MaxMind, Team Cymru, PeeringDB; rate limiter; cache | `quick` profile কাজ করে; 45/min limit কখনো ভাঙে না |
 | **3. Registry + Routing + DNS** | ১ সপ্তাহ | RDAP, RIPEstat (prefix, RPKI, neighbours, abuse), PTR + FCrDNS, Geofeed | Abuse email ও RPKI status দেখায় |
 | **4. Anonymity + Exposure** | ১ সপ্তাহ | Cloud ranges, Tor, Private Relay, VPN-ASN list, InternetDB; `update-lists` | Tor exit IP সঠিকভাবে চিহ্নিত হয় |

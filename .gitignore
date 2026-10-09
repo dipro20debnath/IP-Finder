@@ -1,0 +1,19 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+build/
+dist/
+.pytest_cache/
+.ruff_cache/
+
+# Virtual environments
+.venv/
+venv/
+
+# Secrets: API keys live only in .env (see .env.example)
+.env
+
+# Downloaded datasets, databases and lookup cache (never commit lookup history)
+data/*
+!data/README.md
