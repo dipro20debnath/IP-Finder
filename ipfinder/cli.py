@@ -20,7 +20,9 @@ from __future__ import annotations
 import argparse
 import asyncio
 import codecs
+import contextlib
 import io
+import os
 import sys
 from pathlib import Path
 
@@ -84,6 +86,8 @@ def _read_input_file(path: Path) -> list[str]:
 
 def _prompt(message: str) -> str:
     # The prompt goes to stderr so that "ipfinder -f json > out.json" stays valid JSON.
+    if sys.stdin is None:  # started with stdin closed
+        raise EOFError
     sys.stderr.write(message)
     sys.stderr.flush()
     line = sys.stdin.readline()
@@ -96,7 +100,7 @@ def _collect_inputs(args) -> list[str]:
     inputs = list(args.ips)
     if args.input_file:
         inputs += _read_input_file(args.input_file)
-    if not inputs and not sys.stdin.isatty():
+    if not inputs and sys.stdin is not None and not sys.stdin.isatty():
         inputs = _read_lines(sys.stdin)
     if not inputs:
         inputs = [_prompt("Enter an IP address: ")]
@@ -104,12 +108,24 @@ def _collect_inputs(args) -> list[str]:
 
 
 def _write_output(path: Path, text: str, messages: Console) -> bool:
+    """Encode first, write a temporary file, then rename it over the target, so a
+    failure (bad characters, full disk, ...) never truncates an existing report."""
+    data = text.encode("utf-8", "backslashreplace")  # lone surrogates from odd argv bytes
+    tmp = path.with_name(f".{path.name}.{os.getpid()}.tmp")
     try:
-        path.write_text(text, encoding="utf-8")
-    except (OSError, UnicodeError) as exc:
+        tmp.write_bytes(data)
+        os.replace(tmp, path)
+    except OSError as exc:
+        with contextlib.suppress(OSError):
+            tmp.unlink()
         messages.print(Text(f"[!] Cannot write {path}: {exc}", style="red"))
         return False
     return True
+
+
+def _stdout_is_utf8() -> bool:
+    encoding = (getattr(sys.stdout, "encoding", None) or "").lower().replace("-", "")
+    return encoding in ("utf8", "utf8sig")
 
 
 def _cmd_lookup(args, console: Console, messages: Console) -> int:
@@ -127,7 +143,9 @@ def _cmd_lookup(args, console: Console, messages: Console) -> int:
     reports, errors = asyncio.run(analyze_many(inputs, config))
 
     if args.format == "json":
-        rendered = json_out.render(reports, errors) + "\n"
+        # Non-ASCII stays readable in UTF-8 files; other stdout encodings get \uXXXX.
+        ascii_only = not args.output and not _stdout_is_utf8()
+        rendered = json_out.render(reports, errors, ascii_only=ascii_only) + "\n"
     elif args.output:
         buffer = io.StringIO()
         terminal.print_reports(

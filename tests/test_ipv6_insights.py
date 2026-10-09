@@ -218,3 +218,13 @@ def test_iana_reserved_interface_ids(address, rfc):
 def test_just_outside_reserved_iid_block_is_eui64():
     assert interface_id(ip("2001:db8::200:5eff:fd00:1")) is not None
     assert interface_id(ip("2001:db8::200:5fff:fe00:1"))["type"] == "eui64"
+
+
+@pytest.mark.parametrize("address", ["::ffff:224.0.0.1", "::ffff:169.254.1.1"])
+def test_ipv4_mapped_never_reports_ipv6_multicast_or_structure(address):
+    # Recent CPython patch releases answer is_multicast / is_link_local for mapped
+    # addresses from the embedded IPv4; the result must not depend on the version.
+    result = insights(ip(address))
+    assert result["multicast"] is None
+    assert result["structure"] is None
+    assert result["interface_id"] is None

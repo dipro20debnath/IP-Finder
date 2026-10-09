@@ -206,3 +206,38 @@ def test_non_utf8_stdout_does_not_crash(monkeypatch, no_stdin, fmt):
     assert b"8.8.8.8" in output
     if fmt == "text":
         assert b"\\u09ee" in output  # Bengali digit shown as an escape, not a crash
+
+
+@pytest.mark.parametrize("value", ["𝟖.𝟖.𝟖.𝟖", "x😀", "\u009b2J"])
+def test_json_on_non_utf8_stdout_is_valid_json(monkeypatch, no_stdin, value):
+    raw = io.BytesIO()
+    wrapper = io.TextIOWrapper(raw, encoding="cp1252")
+    monkeypatch.setattr("sys.stdout", wrapper)
+    main(["lookup", "-f", "json", value])
+    wrapper.flush()
+    doc = json.loads(raw.getvalue().decode("cp1252"))
+    assert doc["reports"] or doc["errors"]
+
+
+def test_json_escapes_c1_controls(capsys, no_stdin):
+    main(["lookup", "-f", "json", "\u009b2J\u009b31mRED"])
+    out = capsys.readouterr().out
+    assert "\u009b" not in out  # raw CSI never written
+    assert "\\u009b" in out
+    json.loads(out)
+
+
+def test_failed_write_keeps_existing_report(tmp_path, capsys, no_stdin):
+    target = tmp_path / "keep.json"
+    target.write_text("PREVIOUS", encoding="utf-8")
+    # A lone surrogate (what undecodable argv bytes become) must not truncate the file.
+    assert main(["lookup", "-f", "json", "-o", str(target), "8.8.8.8", "\udcff"]) == 1
+    doc = json.loads(target.read_text(encoding="utf-8"))
+    assert doc["reports"][0]["ip"] == "8.8.8.8"
+    assert not list(tmp_path.glob(".keep.json.*.tmp"))
+
+
+def test_closed_stdin(monkeypatch, capsys):
+    monkeypatch.setattr("sys.stdin", None)
+    assert main([]) == 2
+    assert "No IP address given" in capsys.readouterr().err

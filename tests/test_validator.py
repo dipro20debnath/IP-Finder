@@ -178,3 +178,90 @@ def test_url_userinfo_note():
     parsed = parse_ip("http://user:pass@8.8.8.8/")
     assert parsed.address == ip("8.8.8.8")
     assert any("user-info" in n for n in parsed.notes)
+
+
+@pytest.mark.parametrize(
+    "raw",
+    [
+        "\x01http://1.1.1.1\\@8.8.8.8/",
+        "\x00http://1.1.1.1\\@8.8.8.8/",
+        "ht\ttp://1.1.1.1\\@8.8.8.8/",
+        "h\nttp://1.1.1.1\\@8.8.8.8/",
+        "http\r://1.1.1.1\\@8.8.8.8/",
+    ],
+)
+def test_url_preprocessing_matches_browsers(raw):
+    # WHATWG: strip C0 controls/space at the ends and drop tabs/newlines first.
+    assert parse_ip(raw).address == ip("1.1.1.1")
+
+
+@pytest.mark.parametrize(
+    "raw,reads_as",
+    [
+        ("0177", "0.0.0.127"),
+        ("010", "0.0.0.8"),
+        ("017700000001", "127.0.0.1"),
+        ("http://017700000001/", "127.0.0.1"),
+    ],
+)
+def test_integer_with_leading_zero_is_ambiguous(raw, reads_as):
+    with pytest.raises(InvalidIPError) as excinfo:
+        parse_ip(raw)
+    assert "Leading zero" in excinfo.value.message
+    assert reads_as in excinfo.value.hint
+
+
+def test_url_integer_host_cannot_be_ipv6():
+    with pytest.raises(InvalidIPError) as excinfo:
+        parse_ip("http://4294967296/")
+    assert "larger than any IPv4" in excinfo.value.message
+    assert parse_ip("http://134744072/").address == ip("8.8.8.8")
+
+
+@pytest.mark.parametrize(
+    "raw,reads_as", [("1.2.3.0000000000004", "1.2.3.4"), ("0000000000010.1.1.1", "8.1.1.1")]
+)
+def test_zero_padded_octets_are_leading_zero_not_out_of_range(raw, reads_as):
+    with pytest.raises(InvalidIPError) as excinfo:
+        parse_ip(raw)
+    assert "Leading zero" in excinfo.value.message
+    assert reads_as in excinfo.value.hint
+
+
+def test_inet_aton_matches_glibc_on_many_inputs():
+    import random
+    import socket
+    import sys
+
+    from ipfinder.core.validator import inet_aton
+
+    if not sys.platform.startswith("linux"):
+        pytest.skip("reference behaviour is glibc inet_aton")
+    rng = random.Random(29921)
+    parts = [
+        "0",
+        "00",
+        "07",
+        "08",
+        "010",
+        "0x",
+        "0x1f",
+        "0XfF",
+        "255",
+        "256",
+        "4095",
+        "65535",
+        "16777215",
+        "4294967295",
+        "4294967296",
+        "0x100000000",
+        "1",
+    ]
+    for _ in range(3000):
+        text = ".".join(rng.choice(parts) for _ in range(rng.randint(1, 4)))
+        try:
+            expected = socket.inet_aton(text)
+        except OSError:
+            expected = None
+        got = inet_aton(text)
+        assert (got.packed if got else None) == expected, text

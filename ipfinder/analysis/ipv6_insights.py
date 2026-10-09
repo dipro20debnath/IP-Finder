@@ -17,6 +17,10 @@ TEREDO = ipaddress.ip_network("2001::/32")
 SIXTOFOUR = ipaddress.ip_network("2002::/16")
 IPV4_MAPPED = ipaddress.ip_network("::ffff:0:0/96")
 STARTS_WITH_000 = ipaddress.ip_network("::/3")
+# Explicit prefixes instead of ipaddress.is_multicast / is_link_local: recent CPython
+# patch releases answer those for IPv4-mapped addresses from the embedded IPv4.
+MULTICAST_V6 = ipaddress.ip_network("ff00::/8")
+LINK_LOCAL_V6 = ipaddress.ip_network("fe80::/10")
 
 MULTICAST_SCOPES = {
     0x0: "Reserved",
@@ -125,7 +129,7 @@ def _has_interface_id(ip: ipaddress.IPv6Address) -> bool:
     """RFC 4291 section 2.5.1: unicast addresses need a 64-bit interface ID, except
     those starting with binary 000 (::, ::1, IPv4-mapped, NAT64, discard-only...)."""
     return not (
-        ip.is_multicast
+        ip in MULTICAST_V6
         or ip in STARTS_WITH_000
         or ip in TEREDO  # Teredo's low 64 bits are flags, port and client IPv4
     )
@@ -245,7 +249,7 @@ def interface_id(ip: ipaddress.IPv6Address, oui_lookup=None) -> dict | None:
 
 
 def multicast(ip: ipaddress.IPv6Address) -> dict | None:
-    if not ip.is_multicast:
+    if ip not in MULTICAST_V6:
         return None
     second = ip.packed[1]
     flags, scope = second >> 4, second & 0x0F
@@ -275,7 +279,7 @@ def insights(ip: ipaddress.IPv6Address, oui_lookup=None) -> dict:
     return {
         # Prefix sizes only describe routed unicast space with a real interface ID;
         # for link-local, Teredo, multicast and ::/3 blocks they would mislead.
-        "structure": structure(ip) if _has_interface_id(ip) and not ip.is_link_local else None,
+        "structure": structure(ip) if _has_interface_id(ip) and ip not in LINK_LOCAL_V6 else None,
         "embedded_ipv4": embedded_ipv4(ip),
         "interface_id": interface_id(ip, oui_lookup),
         "multicast": multicast(ip),

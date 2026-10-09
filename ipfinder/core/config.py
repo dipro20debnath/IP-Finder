@@ -30,13 +30,41 @@ _EXPORT = re.compile(r"export\s+")
 _INLINE_COMMENT = re.compile(r"\s#")
 
 
-def _parse_value(value: str) -> str:
-    """'quoted' or "quoted" values keep everything inside the quotes; otherwise a
-    '#' preceded by whitespace starts a comment."""
+_ESCAPES = {
+    '"': {
+        "\\": "\\",
+        '"': '"',
+        "'": "'",
+        "a": "\a",
+        "b": "\b",
+        "f": "\f",
+        "n": "\n",
+        "r": "\r",
+        "t": "\t",
+        "v": "\v",
+    },
+    "'": {"\\": "\\", "'": "'"},
+}
+
+
+def _parse_value(value: str) -> str | None:
+    """Value semantics of python-dotenv: inside "double quotes" backslash escapes
+    (\\n, \\", ...) work, inside 'single quotes' only \\' and \\\\; an unterminated
+    quote makes the line invalid (None). Unquoted, whitespace + '#' starts a comment."""
     if value[:1] in ("'", '"'):
-        end = value.find(value[0], 1)
-        if end != -1:
-            return value[1:end]
+        quote, escapes = value[0], _ESCAPES[value[0]]
+        out, i = [], 1
+        while i < len(value):
+            ch = value[i]
+            if ch == "\\" and i + 1 < len(value) and value[i + 1] in escapes:
+                out.append(escapes[value[i + 1]])
+                i += 2
+            elif ch == quote:
+                return "".join(out)
+            else:
+                out.append(ch)
+                i += 1
+        return None
     match = _INLINE_COMMENT.search(value)
     return (value[: match.start()] if match else value).strip()
 
@@ -56,8 +84,9 @@ def read_dotenv(path: str | Path) -> dict[str, str]:
         line = _EXPORT.sub("", line, count=1) if _EXPORT.match(line) else line
         key, value = line.split("=", 1)
         key = key.strip()
-        if key:
-            values[key] = _parse_value(value.strip())
+        parsed = _parse_value(value.strip())
+        if key and parsed is not None:
+            values[key] = parsed
     return values
 
 

@@ -117,3 +117,19 @@ def test_read_dotenv_with_bom(tmp_path):
     env = tmp_path / ".env"
     env.write_bytes("\ufeffIPINFO_TOKEN=x\n".encode())
     assert read_dotenv(env) == {"IPINFO_TOKEN": "x"}
+
+
+@pytest.mark.parametrize(
+    "line,expected",
+    [
+        ('IPINFO_TOKEN="a\\"b"', {"IPINFO_TOKEN": 'a"b'}),
+        ('IPINFO_TOKEN="a\\nb"', {"IPINFO_TOKEN": "a\nb"}),
+        ("IPINFO_TOKEN='x\\'y'", {"IPINFO_TOKEN": "x'y"}),
+        ("IPINFO_TOKEN='raw\\n'", {"IPINFO_TOKEN": "raw\\n"}),
+        ('IPINFO_TOKEN="unterminated', {}),
+    ],
+)
+def test_read_dotenv_escapes_like_python_dotenv(tmp_path, line, expected):
+    env = tmp_path / ".env"
+    env.write_text(line + "\n", encoding="utf-8")
+    assert read_dotenv(env) == expected

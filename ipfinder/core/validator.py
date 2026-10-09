@@ -33,7 +33,7 @@ _DOTTED_DECIMAL = re.compile(r"\d+(?:\.\d+)*", re.ASCII)
 _IPV4_WITH_PORT = re.compile(r"(\d+\.\d+\.\d+\.\d+):(\d+)", re.ASCII)
 _BRACKETED = re.compile(r"\[([^\]]+)\](?::(\d+))?", re.ASCII)
 _HOSTNAME_CHARS = re.compile(r"[A-Za-z0-9.-]+", re.ASCII)
-_INET_ATON_PART = re.compile(r"0[xX][0-9a-fA-F]*|0[0-7]*|[1-9][0-9]*", re.ASCII)
+_INET_ATON_PART = re.compile(r"0[xX][0-9a-fA-F]+|0[0-7]*|[1-9][0-9]*", re.ASCII)
 _HEX_DIGITS = frozenset("0123456789abcdefABCDEF")
 # WHATWG URL Standard "special" schemes: '\' is treated like '/' in these.
 _SPECIAL_SCHEMES = frozenset({"http", "https", "ftp", "ws", "wss", "file"})
@@ -91,18 +91,22 @@ def _is_network(text: str) -> bool:
 
 
 def inet_aton(text: str) -> ipaddress.IPv4Address | None:
-    """How BSD/glibc ``inet_aton`` (and browsers' URL parser) read ``text``:
-    1-4 dot-separated parts, each decimal, 0-prefixed octal or 0x-prefixed hex,
-    the last part filling the remaining bytes. Returns None if it is not that form."""
+    """How glibc ``inet_aton`` reads ``text`` (tested against it): 1-4 dot-separated
+    parts, each decimal, 0-prefixed octal or 0x-prefixed hex, the last part filling
+    the remaining bytes. Returns None if it is not that form. Browsers (WHATWG URL
+    parser) read the same forms, differing only in corner cases such as a bare "0x"."""
     parts = text.split(".")
     if not 1 <= len(parts) <= 4:
         return None
     values = []
     for part in parts:
-        if not part or len(part) > 12 or not _INET_ATON_PART.fullmatch(part):
+        if not part or not _INET_ATON_PART.fullmatch(part):
+            return None
+        digits = part[2:] if part[:2] in ("0x", "0X") else part
+        if len(digits.lstrip("0")) > 12:  # far beyond 32 bits; skip a costly int()
             return None
         if part[:2] in ("0x", "0X"):
-            values.append(int(part[2:] or "0", 16))
+            values.append(int(part[2:], 16))
         elif len(part) > 1 and part[0] == "0":
             values.append(int(part, 8))
         else:
@@ -135,7 +139,8 @@ def _diagnose(text: str) -> InvalidIPError:
                 f"'{shown}' has {len(parts)} part(s); an IPv4 address needs exactly 4", hint
             )
         for part in parts:
-            value = int(part) if len(part) <= 12 else None  # bounded int() conversion
+            # bounded int(): zero padding does not count towards the size
+            value = int(part) if len(part.lstrip("0")) <= 12 else None
             if value is None or value > 255:
                 return InvalidIPError(
                     f"Octet {display_safe(part[:20])} in '{shown}' is out of range",
@@ -166,7 +171,17 @@ def _diagnose(text: str) -> InvalidIPError:
     return InvalidIPError(f"'{shown}' is not a valid IPv4 or IPv6 address")
 
 
+_C0_AND_SPACE = "".join(chr(i) for i in range(0x21))
+
+
 def _from_url(text: str, notes: list[str]) -> tuple[str, int | None]:
+    # WHATWG URL Standard preprocessing, the same as browsers: strip leading and
+    # trailing C0 controls/spaces and remove every tab and newline. Without it,
+    # "ht\ttp://1.1.1.1\\@8.8.8.8/" would hide the special scheme below.
+    cleaned = text.strip(_C0_AND_SPACE).replace("\t", "").replace("\n", "").replace("\r", "")
+    if cleaned != text:
+        notes.append("Removed control characters, tabs or newlines from the URL, as browsers do")
+        text = cleaned
     scheme = text.split("://", 1)[0].lower()
     if "\\" in text and scheme in _SPECIAL_SCHEMES:
         # Browsers end the host at '\' for http(s) etc.; urlsplit would not, and
@@ -209,7 +224,8 @@ def parse_ip(raw: str) -> ParsedInput:
         text = normalised
 
     port: int | None = None
-    if "://" in text:
+    from_url = "://" in text
+    if from_url:
         text, port = _from_url(text, notes)
 
     bracketed = _BRACKETED.fullmatch(text)
@@ -223,9 +239,22 @@ def parse_ip(raw: str) -> ParsedInput:
             text, port = with_port.group(1), _parse_port(with_port.group(2))
 
     if text.isascii() and text.isdigit():
-        if len(text.lstrip("0")) > 39:  # 2**128 - 1 has 39 digits
+        if len(text) > 1 and text.startswith("0"):
+            aton = inet_aton(text)
+            reading = f"e.g. inet_aton and browsers read it as {aton}" if aton else "or rejects it"
+            raise InvalidIPError(
+                f"Leading zero in integer '{text[:40]}' is ambiguous",
+                f"some software reads it as octal ({reading}; CVE-2021-29921); "
+                "remove leading zeros",
+            )
+        if len(text) > 39:  # 2**128 - 1 has 39 digits
             raise InvalidIPError("Integer is larger than any IPv6 address (2^128 - 1)")
         value = int(text)
+        if from_url and value > 2**32 - 1:
+            raise InvalidIPError(
+                f"URL host {value} is larger than any IPv4 address",
+                "a URL can hold an IPv6 address only in brackets, e.g. http://[2001:db8::1]/",
+            )
         if value <= 2**32 - 1:
             address: IPAddress = ipaddress.IPv4Address(value)
         elif value <= 2**128 - 1:
