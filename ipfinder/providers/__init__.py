@@ -12,11 +12,15 @@ from dataclasses import dataclass
 
 from ipfinder.providers.base import Provider
 from ipfinder.providers.cymru import TeamCymruProvider
+from ipfinder.providers.geofeed import GeofeedProvider
 from ipfinder.providers.ipapi import IpApiProvider
 from ipfinder.providers.ipinfo_lite import IpinfoLiteProvider
 from ipfinder.providers.maxmind import MaxMindProvider
 from ipfinder.providers.offline import OfflineProvider
 from ipfinder.providers.peeringdb import PeeringDBProvider
+from ipfinder.providers.rdap import RDAPProvider
+from ipfinder.providers.reverse_dns import ReverseDNSProvider
+from ipfinder.providers.ripestat import RIPEstatProvider
 
 
 @dataclass(frozen=True)
@@ -35,15 +39,15 @@ def default_providers() -> list[Provider]:
         IpinfoLiteProvider(),
         MaxMindProvider(),
         TeamCymruProvider(),
+        RDAPProvider(),
+        RIPEstatProvider(),
+        ReverseDNSProvider(),
         PeeringDBProvider(),
+        GeofeedProvider(),
     ]
 
 
 PLANNED_PROVIDERS = (
-    PlannedProvider("rdap", "L4", 3, None, "Registration, net range, abuse contact"),
-    PlannedProvider("ripestat", "L5", 3, None, "BGP prefix, RPKI, neighbours"),
-    PlannedProvider("dns", "L6", 3, None, "PTR and forward-confirmed reverse DNS"),
-    PlannedProvider("geofeed", "L2", 3, None, "Operator-published location (RFC 8805/9632)"),
     PlannedProvider("cloud-ranges", "L7", 4, None, "AWS/GCP/Azure/Cloudflare range match"),
     PlannedProvider("tor", "L7", 4, None, "Tor exit node list"),
     PlannedProvider("private-relay", "L7", 4, None, "iCloud Private Relay egress ranges"),

@@ -48,20 +48,22 @@ class FakeAPI:
 
 
 class FakeDNS:
-    """TXT records by name; unknown names are NXDOMAIN."""
+    """DNS records by name (TXT) or by (name, type); anything else is NXDOMAIN."""
 
     def __init__(self):
-        self.records: dict[str, list[str]] = {}
-        self.queries: list[str] = []
+        self.records: dict = {}
+        self.queries: list[tuple[str, str]] = []
 
-    async def __call__(self, name: str, timeout: float = 5.0) -> list[str]:
-        self.queries.append(name)
-        if name in self.records:
-            value = self.records[name]
-            if isinstance(value, Exception):
-                raise value
-            return value
-        raise DNSLookupError(f"{name} does not exist", nxdomain=True)
+    async def __call__(self, name: str, rdtype: str = "TXT", timeout: float = 5.0) -> list[str]:
+        self.queries.append((name, rdtype))
+        value = self.records.get((name, rdtype))
+        if value is None and rdtype == "TXT":
+            value = self.records.get(name)
+        if value is None:
+            raise DNSLookupError(f"{name} does not exist", nxdomain=True)
+        if isinstance(value, Exception):
+            raise value
+        return value
 
 
 @pytest.fixture(autouse=True)
@@ -73,6 +75,7 @@ def fake_api(monkeypatch):
             transport=httpx.MockTransport(api),
             headers={"User-Agent": USER_AGENT},
             timeout=config.timeout,
+            follow_redirects=True,  # same as the real client
         )
 
     monkeypatch.setattr(session_module, "make_http_client", make_client)

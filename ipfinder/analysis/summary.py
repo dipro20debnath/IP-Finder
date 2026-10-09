@@ -1,6 +1,6 @@
 """Combine what the providers found into a short summary.
 
-Phase 2 shows every source side by side and only flags disagreements; the
+Every source is shown side by side and only disagreements are flagged; the
 weighted consensus and confidence score arrive in Phase 6.
 """
 
@@ -13,9 +13,11 @@ try:
 except ImportError:  # pragma: no cover - Python < 3.9 is not supported anyway
     ZoneInfo = None
 
-# MaxMind gives an accuracy radius, so it is preferred for the map pin.
-LOCATION_PRIORITY = ("maxmind", "ip-api", "ipinfo-lite")
-ASN_PRIORITY = ("team-cymru", "maxmind", "ipinfo-lite", "ip-api")
+# The operator's own geofeed comes first; it has no coordinates, so the map pin
+# comes from MaxMind (which gives an accuracy radius) or the next source.
+LOCATION_PRIORITY = ("geofeed", "maxmind", "ip-api", "ipinfo-lite")
+# BGP-derived sources first: they see the live routing table.
+ASN_PRIORITY = ("team-cymru", "ripestat", "maxmind", "ipinfo-lite", "ip-api")
 
 
 def _ok_data(results: dict, name: str) -> dict:
@@ -83,5 +85,25 @@ def build_summary(results: dict, now: datetime | None = None) -> dict:
     if asns:
         summary["asn_by_source"] = asns
         summary["asns_agree"] = len(set(asns.values())) == 1
+
+    abuse: dict[str, list[str]] = {}
+    for contact in _ok_data(results, "rdap").get("abuse_contacts") or []:
+        for email in contact.get("emails") or []:
+            abuse.setdefault(email.lower(), []).append("rdap")
+    for email in _ok_data(results, "ripestat").get("abuse_contacts") or []:
+        abuse.setdefault(email.lower(), []).append("ripestat")
+    if abuse:
+        summary["abuse_contacts"] = [
+            {"email": email, "sources": list(dict.fromkeys(sources))}
+            for email, sources in abuse.items()
+        ]
+
+    ripestat = _ok_data(results, "ripestat")
+    if ripestat:
+        summary["announced"] = ripestat.get("announced")
+        if ripestat.get("rpki"):
+            summary["rpki"] = [
+                {"origin": r["origin"], "status": r["status"]} for r in ripestat["rpki"]
+            ]
 
     return summary

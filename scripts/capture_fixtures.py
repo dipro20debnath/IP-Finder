@@ -63,10 +63,14 @@ SOURCES = (
     # Free endpoint is HTTP only and allows 45 requests/minute.
     Source("ip-api", "http://ip-api.com/json/{ip}?fields=" + IP_API_FIELDS, min_interval=1.5),
     Source("ipinfo-lite", "https://api.ipinfo.io/lite/{ip}?token={key}", key_env="IPINFO_TOKEN"),
-    Source("rdap", "https://rdap.org/ip/{ip}"),
+    Source("rdap", "https://rdap.org/ip/{ip}", headers=(("Accept", "application/rdap+json"),)),
     Source(
         "ripestat-prefix-overview",
         "https://stat.ripe.net/data/prefix-overview/data.json?resource={ip}&sourceapp=ip-finder",
+    ),
+    Source(
+        "ripestat-routing-status",
+        "https://stat.ripe.net/data/routing-status/data.json?resource={ip}&sourceapp=ip-finder",
     ),
     Source(
         "ripestat-abuse-contact",

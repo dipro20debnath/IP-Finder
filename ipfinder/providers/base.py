@@ -69,6 +69,12 @@ class Provider(ABC):
     def cache_key(self, ctx: LookupContext) -> str | None:
         return ctx.target
 
+    async def wait_turn(self, ctx: LookupContext) -> None:
+        """Wait for a free rate-limit slot. Runs before ``lookup`` and outside its timeout;
+        must not raise ProviderError (``lookup`` reports problems)."""
+        if self.rate_limit:
+            await ctx.session.limiter(self.name, *self.rate_limit).acquire()
+
     async def prefetch(self, targets: list[str], session) -> None:
         """Optionally fetch many targets at once into the session cache."""
         return None

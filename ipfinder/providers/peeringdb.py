@@ -14,7 +14,7 @@ from ipfinder.providers.base import DAY, LookupContext, Provider
 from ipfinder.providers.common import compact
 
 URL = "https://www.peeringdb.com/api/net"
-ASN_SOURCES = ("team-cymru", "maxmind", "ipinfo-lite", "ip-api")
+ASN_SOURCES = ("team-cymru", "ripestat", "maxmind", "ipinfo-lite", "ip-api")
 
 
 def known_asn(ctx: LookupContext) -> int | None:

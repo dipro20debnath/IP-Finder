@@ -4,8 +4,10 @@ Order:
   1. validate the input
   2. stage 0 - offline analysis (L1); it decides whether online layers may run
      and which address they should query (e.g. the IPv4 inside a 6to4 address)
-  3. stage 1 - independent sources run concurrently (ip-api, IPinfo, MaxMind, Team Cymru)
-  4. stage 2 - sources that need stage-1 data (PeeringDB needs the ASN)
+  3. stage 1 - independent sources run concurrently (ip-api, IPinfo, MaxMind,
+     Team Cymru, RDAP, RIPEstat, reverse DNS)
+  4. stage 2 - sources that need stage-1 data (PeeringDB needs the ASN, Geofeed
+     needs the URL from RDAP)
 A provider that fails never stops the others. Results come from the cache when
 fresh, and every network call passes the provider's rate limiter first.
 """
@@ -40,9 +42,11 @@ async def _run(provider: Provider, ctx: LookupContext) -> ProviderResult:
         if error is not None:
             return ProviderResult(**base, ok=False, error=error, cached=True)
 
-    if provider.rate_limit:
-        # Waiting for a free slot does not count against the provider's timeout.
-        await session.limiter(provider.name, *provider.rate_limit).acquire()
+    # Waiting for a free rate-limit slot does not count against the provider's timeout.
+    try:
+        await provider.wait_turn(ctx)
+    except Exception as exc:  # a bug in one provider must not sink the whole report
+        return ProviderResult(**base, ok=False, error=f"unexpected {type(exc).__name__}: {exc}")
 
     start = time.perf_counter()
     try:
@@ -57,10 +61,11 @@ async def _run(provider: Provider, ctx: LookupContext) -> ProviderResult:
     elapsed = round((time.perf_counter() - start) * 1000, 2)
 
     if key is not None:
-        if ok:
+        if ok and not data.get("partial_errors"):
             session.cache.put(provider.name, key, data, provider.cache_ttl)
-        else:
+        elif not ok:
             session.cache.put_error(provider.name, key, error)
+        # A result with partial_errors is shown but not cached, so the next run retries.
     return ProviderResult(**base, ok=ok, data=data, error=error, elapsed_ms=elapsed)
 
 

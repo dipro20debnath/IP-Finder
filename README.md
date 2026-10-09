@@ -1,10 +1,64 @@
-# IP Finder v2 (Phase 0–2)
+# IP Finder v2 (Phase 0–3)
 
 একটি IP address থেকে **আইনসঙ্গতভাবে যা যা জানা সম্ভব**, তা ধাপে ধাপে বের করার Python tool। পুরো roadmap: [ADVANCED_PLAN.md](ADVANCED_PLAN.md)।
 
-এই version-এ আছে **Phase 0 (setup)**, **Phase 1 (offline analysis)** আর **Phase 2 (location ও network: ip-api, IPinfo Lite, MaxMind GeoLite2, Team Cymru, PeeringDB)**। কোনো API key ছাড়াই চলে; key বা database যোগ করলে আরও source যুক্ত হয়। RDAP, BGP/RPKI, DNS আসবে Phase 3-এ।
+এই version-এ আছে **Phase 0 (setup)**, **Phase 1 (offline analysis)**, **Phase 2 (location ও network: ip-api, IPinfo Lite, MaxMind GeoLite2, Team Cymru, PeeringDB)** আর **Phase 3 (registry, routing ও DNS: RDAP, RIPEstat BGP/RPKI, reverse DNS + FCrDNS, Geofeed)**। কোনো API key ছাড়াই চলে; key বা database যোগ করলে আরও source যুক্ত হয়। Anonymity (Tor, VPN, cloud range) আসবে Phase 4-এ।
 
 > ⚠️ IP geolocation আনুমানিক। একটি IP address কোনো ব্যক্তিকে শনাক্ত করে না।
+
+---
+
+## Phase 3: registry, routing ও DNS
+
+| Source | কী দেয় | Key | সীমা ও শর্ত |
+|---|---|---|---|
+| **RDAP** (RFC 9083) | Network-এর নাম ও handle, registered range ও CIDR, কার নামে registered, allocation type, registration ও last-changed তারিখ, parent block, **abuse e-mail ও phone**, geofeed link | লাগে না | কোন RIR-কে জিজ্ঞেস করতে হবে তা IANA bootstrap file (RFC 9224) থেকে বের করে; সেটা না পেলে `rdap.org`। LACNIC: 10/min, বাকি server-এ ভদ্রভাবে 30/min |
+| **RIPEstat** | BGP-তে announced কিনা, prefix ও origin AS, **RPKI status**, কতগুলো RIS peer prefix-টা দেখে, প্রথম/শেষ কবে BGP-তে দেখা গেছে, পাশের AS-গুলো, abuse e-mail | লাগে না | একসাথে সর্বোচ্চ ৮টি request (IP Finder ৫টির বেশি পাঠায় না); `sourceapp=ip-finder` |
+| **Reverse DNS** | PTR hostname, **forward-confirmed** কিনা (FCrDNS), hostname থেকে ইঙ্গিত (home line, mobile, cloud, hosting, mail server...) | লাগে না | নিজের DNS resolver |
+| **Geofeed** (RFC 8805 / 9632) | Network operator নিজে যে location প্রকাশ করে: দেশ, ISO 3166-2 region, শহর | লাগে না | শুধু HTTPS, file ≤ 10 MB; RDAP record-এ link থাকলে তবেই চলে |
+
+**RPKI status-এর মানে:**
+
+| Status | মানে |
+|---|---|
+| `valid` | একটি ROA এই origin AS-কে এই prefix announce করার অনুমতি দেয় |
+| `invalid_asn` | কোনো ROA এই origin AS-কে অনুমতি দেয় না: hijack বা ভুল configuration হতে পারে |
+| `invalid_length` | Announce করা prefix ROA-র max length-এর চেয়ে বেশি specific |
+| `unknown` | কোনো ROA এই route cover করে না (RPKI দিয়ে সুরক্ষিত নয়; এটা ভুল নয়) |
+
+- **Abuse contact:** RDAP আর RIPEstat দুই জায়গা থেকেই e-mail নিয়ে মিলিয়ে দেখায়, কোনটা কোন source থেকে এসেছে সহ। Attack বা spam-এর report সেখানেই পাঠাতে হয়; কোন customer address-টা ব্যবহার করেছিল, তা শুধু network operator জানে।
+- **FCrDNS কেন:** Reverse zone যার হাতে, সে যেকোনো নাম বসাতে পারে (এমনকি `mail.google.com`)। নামটা আবার resolve করে একই address পাওয়া গেলে তবেই নামটা বিশ্বাসযোগ্য। Mail server-গুলো ঠিক এটাই যাচাই করে।
+- **Hostname-এর ইঙ্গিত শুধু ইঙ্গিত:** `pool-71-...fios.verizon.net` বা `ec2-...amazonaws.com` জাতীয় নাম থেকে network-এর ধরন আন্দাজ করা যায়, কিন্তু operator নাম ইচ্ছেমতো রাখতে পারে। `tor1` জাতীয় নাম প্রায়ই Toronto বোঝায়, তাই একা "tor" শব্দকে Tor ধরা হয় না।
+- **Geofeed-এর নিয়ম (RFC 9632):** File-এর কোনো entry তখনই ব্যবহার হয়, যখন সেটা geofeed-এর link দেওয়া registered network-এর ভেতরে পড়ে। নাহলে যে কেউ অন্যের address-এর location লিখে দিতে পারত। HTTP-তে redirect হলে download বাতিল হয়। RPKI signature থাকলে জানায়, কিন্তু যাচাই করে না।
+- **Terminal নিরাপত্তা:** Registry remark, hostname বা API বার্তায় terminal control character (যেমন ESC) থাকলে তা `\x1b` হিসেবে দেখায়, কখনো terminal-কে নিয়ন্ত্রণ করতে দেয় না।
+- **সৎ বার্তা:** DNS resolver সব নামকে "নেই" বললে reverse DNS "PTR নেই" বলে না; আগে একটা সবসময়-থাকা PTR record দিয়ে যাচাই করে। RIPEstat-এর কোনো একটা অংশ fail করলে বাকিটা দেখায়, কী বাদ গেল তা জানায়, আর সেই অসম্পূর্ণ ফল cache করে না।
+
+### Test data দিয়ে output (সংক্ষেপিত)
+
+এখানে RDAP অংশের field-গুলো ARIN-এর 8.8.8.8 record-এর গঠন মেনে বানানো। কিন্তু RIPEstat-এর সংখ্যা (330 of 333 peer, neighbour সংখ্যা) আর geofeed **উদাহরণ মাত্র, আসল data নয়**। এই environment থেকে বাইরের internet-এ যাওয়া যায় না।
+
+```text
+│ Routing and RPKI (RIPEstat)
+│   BGP                     announced as 8.8.8.0/24 by AS15169 (GOOGLE - Google LLC)
+│   RPKI (AS15169)          valid - a ROA authorises this origin AS for this prefix
+│                           (ROA 8.8.8.0/24 max /24 AS15169)
+│   Visibility              330 of 333 RIS peers (99%)
+│   Busiest upstream side   AS1299, AS174, AS3356
+│ Registration (RDAP)
+│   Network name      GOGL (NET-8-8-8-0-2)
+│   Registered to     Google LLC (GOGL)
+│   Range             8.8.8.0 - 8.8.8.255
+│   Allocation type   DIRECT ALLOCATION
+│   Registered        2023-12-28
+│   Registry          ARIN (rdap.arin.net)
+│ Abuse contact
+│   E-mail   network-abuse@google.com  (rdap, ripestat)
+│ Reverse DNS
+│   PTR                 dns.google
+│   Forward-confirmed   yes - dns.google resolves back to this address
+```
+
+> **যাচাইয়ের অবস্থা:** RDAP, RIPEstat, reverse DNS আর Geofeed-এর code RFC ও প্রতিটি service-এর documentation-এ দেওয়া response format দিয়ে test করা হয়েছে (fake HTTP ও fake DNS দিয়ে)। আসল service-এর বিরুদ্ধে প্রথমবার চালানো হবে আপনার computer-এ।
 
 ---
 
@@ -18,7 +72,7 @@
 | **Team Cymru** | BGP-তে announce করা prefix, origin ASN, RIR, allocation date, AS name | লাগে না (DNS) | Fair use |
 | **PeeringDB** | ASN-টা কেমন network: ISP / Content / Education, scope, peering policy | ঐচ্ছিক `PEERINGDB_API_KEY` | ASN জানা গেলে তবেই চলে |
 
-- **Cache:** online উত্তর `data/cache.sqlite`-এ জমা থাকে (ip-api, IPinfo, Team Cymru ১ দিন, PeeringDB ৭ দিন), তাই একই IP বারবার দেখলে free quota খরচ হয় না।
+- **Cache:** online উত্তর `data/cache.sqlite`-এ জমা থাকে (reverse DNS ১ ঘণ্টা, RIPEstat ৬ ঘণ্টা, ip-api, IPinfo, Team Cymru ও Geofeed ১ দিন, RDAP, RDAP bootstrap ও PeeringDB ৭ দিন), তাই একই IP বারবার দেখলে free quota খরচ হয় না।
 - **Rate limiter:** ip-api-র ৪৫/মিনিট সীমা কখনো পার হয় না। নিরাপত্তার জন্য ০.৫ সেকেন্ড margin রাখা আছে, আর `X-Rl`/`X-Ttl` header ও HTTP 429 মানা হয়। একাধিক IP দিলে ip-api-র batch endpoint ব্যবহার হয়।
 - **একাধিক source পাশাপাশি:** দেশ বা ASN নিয়ে source-গুলো একমত না হলে সতর্কবার্তা দেখায়। MaxMind-এর "registered country" আর "location country" আলাদা হলেও জানায়।
 - **Map ও সময়:** OpenStreetMap ও Google Maps link (accuracy radius থাকায় MaxMind-কে প্রাধান্য), আর ওই এলাকার এখনকার local time।
@@ -200,9 +254,9 @@ IP-Finder/
 │   │   ├── session.py          # one run: HTTP client, DNS, cache, rate limiters
 │   │   ├── cache.py            # memory + SQLite cache with per-provider TTL
 │   │   ├── ratelimit.py        # sliding-window limiter + server-driven pauses
-│   │   ├── http.py             # JSON requests; errors never contain the URL/token
-│   │   ├── dns.py              # TXT lookups (dnspython)
-│   │   └── orchestrator.py     # stage 0 offline → stage 1 sources → stage 2 (PeeringDB)
+│   │   ├── http.py             # JSON requests, capped downloads; errors never contain the URL/token
+│   │   ├── dns.py              # TXT / PTR / A / AAAA lookups (dnspython)
+│   │   └── orchestrator.py     # stage 0 offline → stage 1 sources → stage 2 (PeeringDB, Geofeed)
 │   ├── providers/
 │   │   ├── base.py             # Provider interface (profile, key, files, cache, limits)
 │   │   ├── offline.py          # L1
@@ -211,16 +265,21 @@ IP-Finder/
 │   │   ├── maxmind.py          # GeoLite2 City + ASN (.mmdb)
 │   │   ├── cymru.py            # Team Cymru IP-to-ASN over DNS
 │   │   ├── peeringdb.py        # PeeringDB network type
+│   │   ├── rdap.py             # RDAP: IANA bootstrap, registration, abuse contact
+│   │   ├── ripestat.py         # RIPEstat: BGP, RPKI, visibility, neighbours, abuse
+│   │   ├── reverse_dns.py      # PTR + forward-confirmed reverse DNS
+│   │   ├── geofeed.py          # operator-published location (RFC 8805 / 9632)
 │   │   ├── common.py           # shared normalisation helpers
-│   │   └── __init__.py         # registry + planned providers (Phase 3–7)
+│   │   └── __init__.py         # registry + planned providers (Phase 4–7)
 │   ├── analysis/
 │   │   ├── addressing.py       # representations, IPv4 class, multicast, Python flags
 │   │   ├── ipv6_insights.py    # embedded IPv4, EUI-64/ISATAP, structure, multicast
 │   │   ├── oui.py              # IEEE OUI vendor lookup
+│   │   ├── hostname.py         # hints from a reverse-DNS name
 │   │   ├── offline.py          # combines L1 + online-lookup decision
 │   │   └── summary.py          # map pin, local time, agreement between sources
 │   └── output/
-│       ├── terminal.py         # rich panels (user input never parsed as markup)
+│       ├── terminal.py         # rich panels (no markup parsing, control characters escaped)
 │       └── json_out.py
 ├── scripts/capture_fixtures.py # Phase 0: record real API responses for tests
 ├── tests/                      # pytest; runs offline (fake HTTP + DNS)
@@ -254,7 +313,7 @@ python scripts/capture_fixtures.py                  # 8.8.8.8, 1.1.1.1, 2001:486
 python scripts/capture_fixtures.py 8.8.8.8 --only ip-api rdap   # IP আগে, তারপর --only
 ```
 
-- Key ছাড়া চলে: ip-api, RDAP, RIPEstat, Shodan InternetDB, GreyNoise Community (key ঐচ্ছিক)।
+- Key ছাড়া চলে: ip-api, RDAP, RIPEstat (prefix-overview, routing-status, abuse-contact), Shodan InternetDB, GreyNoise Community (key ঐচ্ছিক)।
 - Key লাগে: IPinfo Lite, AbuseIPDB, VirusTotal (key না থাকলে skip হয়)।
 - API key কখনো fixture file-এ লেখা হয় না (URL redact করা হয়, request header save হয় না)।
 - Rate limit মানা হয়: ip-api-তে 45/min (`X-Rl`/`X-Ttl` header পড়ে অপেক্ষা করে), VirusTotal-এ 4/min।
@@ -270,7 +329,7 @@ python scripts/capture_fixtures.py 8.8.8.8 --only ip-api rdap   # IP আগে, 
 | 0 | Setup, `.env`, CI, fixture capture script | 🟡 script প্রস্তুত; আসল API fixture এখনও রেকর্ড করা বাকি (নিচে দেখুন) |
 | 1 | Validator, L1 offline analysis, models, CLI | ✅ |
 | 2 | ip-api, IPinfo Lite, MaxMind, Team Cymru, PeeringDB; cache, rate limiter | ✅ (code ও test; আসল API-তে প্রথম চালানো বাকি) |
-| 3 | RDAP, RIPEstat (BGP/RPKI), DNS/FCrDNS, Geofeed | ⏳ |
+| 3 | RDAP, RIPEstat (BGP/RPKI), DNS/FCrDNS, Geofeed | ✅ (code ও test; আসল API-তে প্রথম চালানো বাকি) |
 | 4–10 | Anonymity, threat intel, scoring, active mode, reports, dashboard | ⏳ |
 
 `ipfinder sources` চালালে প্রতিটি data source-এর phase ও API-key অবস্থা দেখা যায়।

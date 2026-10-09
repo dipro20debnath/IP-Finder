@@ -1,4 +1,4 @@
-"""HTTP helper for providers.
+"""HTTP helpers for providers.
 
 Error messages never contain the request URL: some providers (IPinfo) take the
 API token as a URL parameter, and it must not leak into reports or logs.
@@ -21,28 +21,7 @@ def _retry_after(headers: httpx.Headers) -> float | None:
     return None
 
 
-async def request_json(
-    session,
-    method: str,
-    url: str,
-    *,
-    limiter=None,
-    params: dict | None = None,
-    json: Any = None,
-    headers: dict | None = None,
-    ok_statuses: tuple[int, ...] = (200,),
-) -> tuple[httpx.Response, Any]:
-    """Send a request and decode JSON. HTTP 429 pauses ``limiter`` (if given)."""
-    host = urlsplit(url).hostname
-    try:
-        response = await session.http.request(
-            method, url, params=params, json=json, headers=headers
-        )
-    except httpx.TimeoutException:
-        raise ProviderError(f"timed out talking to {host}") from None
-    except httpx.HTTPError as exc:
-        raise ProviderError(f"cannot reach {host} ({type(exc).__name__})") from None
-
+def _check_status(response: httpx.Response, host, limiter, ok_statuses) -> None:
     if response.status_code == 429:
         wait = _retry_after(response.headers) or 60.0
         if limiter is not None:
@@ -54,8 +33,70 @@ async def request_json(
         )
     if response.status_code not in ok_statuses:
         raise ProviderError(f"{host} answered HTTP {response.status_code}")
+
+
+async def send(
+    session,
+    method: str,
+    url: str,
+    *,
+    limiter=None,
+    params: dict | None = None,
+    json: Any = None,
+    headers: dict | None = None,
+    ok_statuses: tuple[int, ...] = (200,),
+) -> httpx.Response:
+    """Send a request; any status outside ``ok_statuses`` raises ProviderError.
+    HTTP 429 pauses ``limiter`` (if given)."""
+    host = urlsplit(url).hostname
     try:
-        data = response.json()
+        response = await session.http.request(
+            method, url, params=params, json=json, headers=headers
+        )
+    except httpx.TimeoutException:
+        raise ProviderError(f"timed out talking to {host}") from None
+    except httpx.HTTPError as exc:
+        raise ProviderError(f"cannot reach {host} ({type(exc).__name__})") from None
+    _check_status(response, host, limiter, ok_statuses)
+    return response
+
+
+def decode_json(response: httpx.Response) -> Any:
+    try:
+        return response.json()
     except ValueError:
-        raise ProviderError(f"{host} returned invalid JSON") from None
-    return response, data
+        raise ProviderError(f"{response.url.host} returned invalid JSON") from None
+
+
+async def request_json(session, method: str, url: str, **kwargs) -> tuple[httpx.Response, Any]:
+    """``send`` and decode the JSON body (same keyword arguments as ``send``)."""
+    response = await send(session, method, url, **kwargs)
+    return response, decode_json(response)
+
+
+async def fetch_text(
+    session, url: str, *, max_bytes: int, headers: dict | None = None, https_only: bool = True
+) -> str:
+    """Download a text file of at most ``max_bytes`` (stops reading beyond that).
+    With ``https_only`` a redirect to plain HTTP is refused."""
+    host = urlsplit(url).hostname
+    chunks: list[bytes] = []
+    try:
+        async with session.http.stream("GET", url, headers=headers) as response:
+            _check_status(response, host, None, (200,))
+            if https_only and response.url.scheme != "https":
+                raise ProviderError(f"{host} redirected to plain HTTP; refused")
+            declared = response.headers.get("content-length", "").strip()
+            if declared.isdigit() and int(declared) > max_bytes:
+                raise ProviderError(f"{host} file is larger than {max_bytes / 1e6:g} MB")
+            size = 0
+            async for chunk in response.aiter_bytes():
+                size += len(chunk)
+                if size > max_bytes:
+                    raise ProviderError(f"{host} file is larger than {max_bytes / 1e6:g} MB")
+                chunks.append(chunk)
+    except httpx.TimeoutException:
+        raise ProviderError(f"timed out talking to {host}") from None
+    except httpx.HTTPError as exc:
+        raise ProviderError(f"cannot reach {host} ({type(exc).__name__})") from None
+    return b"".join(chunks).decode("utf-8", "replace")

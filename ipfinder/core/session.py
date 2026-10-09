@@ -10,7 +10,7 @@ import httpx
 from ipfinder import __version__
 from ipfinder.core.cache import Cache
 from ipfinder.core.config import Config
-from ipfinder.core.dns import resolve_txt as default_dns_resolve
+from ipfinder.core.dns import resolve_records as default_dns_resolve
 from ipfinder.core.ratelimit import RateLimiter
 
 USER_AGENT = f"ip-finder/{__version__} (+https://github.com/dipro20debnath/IP-Finder)"

@@ -226,8 +226,8 @@ Active mode চালু করতে `--active` flag এবং একটি স
 | ip-api.com | `http://ip-api.com/json/{ip}` | না | 45 req/min (single), batch 15 req/min × 100 IP | Non-commercial; free-তে HTTPS নেই | ✅ |
 | IPinfo Lite | `https://api.ipinfo.io/lite/{ip}?token=…` | Free token | Unlimited (শুধু country + ASN) | Commercial use with attribution | ✅ (May 2025 থেকে) |
 | MaxMind GeoLite2 | Local `.mmdb` file (`geoip2` library) | Free account + license key | Offline, unlimited | GeoLite2 EULA | ✅ |
-| RDAP | `https://rdap.org/ip/{ip}` | না | Fair use | Public registry data | ✅ |
-| RIPEstat | `https://stat.ripe.net/data/…` | না (`sourceapp` param দিন) | Fair use | Free | ✅ |
+| RDAP | IANA bootstrap (`data.iana.org/rdap/ipv4.json`) → RIR server; fallback `https://rdap.org/ip/{ip}` | না | LACNIC: 10/min ও 1,000/ঘণ্টা; বাকি RIR সংখ্যা প্রকাশ করে না | Public registry data | ✅ |
+| RIPEstat | `https://stat.ripe.net/data/…` | না (`sourceapp` param দিন) | একটি IP থেকে একসাথে সর্বোচ্চ ৮টি request | Free | ✅ |
 | Team Cymru | DNS: `origin.asn.cymru.com` | না | Fair use | Free | ✅ |
 | PeeringDB | `https://www.peeringdb.com/api/net?asn=…` | না (key দিলে limit বাড়ে) | Anonymous-এ কম | Free | ✅ |
 | Shodan InternetDB | `https://internetdb.shodan.io/{ip}` | না | উচ্চ | Non-commercial | ✅ |
@@ -619,7 +619,7 @@ python -m ipfinder update-lists                       # Tor, cloud ranges, Priva
 | **0. Setup ও source যাচাই** 🟡 (script প্রস্তুত, fixture রেকর্ড বাকি) | ১–২ দিন | Repo structure, `pyproject.toml`, venv, `.env.example`; প্রতিটি API একবার হাতে চালিয়ে response `tests/fixtures/`-এ সংরক্ষণ | সব source-এর fixture আছে; key-গুলো `.env`-এ, git-এ নয় |
 | **1. Core + Offline** ✅ | ৩–৪ দিন | Validator, L1 (classify, CGNAT, embedded IPv4, EUI-64), models, CLI skeleton | Private/CGNAT/IPv6 test সব pass |
 | **2. Geo + Network** ✅ (code ও test; আসল API-তে প্রথম চালানো বাকি) | ১ সপ্তাহ | ip-api (single+batch), IPinfo Lite, MaxMind, Team Cymru, PeeringDB; rate limiter; cache | `quick` profile কাজ করে; 45/min limit কখনো ভাঙে না |
-| **3. Registry + Routing + DNS** | ১ সপ্তাহ | RDAP, RIPEstat (prefix, RPKI, neighbours, abuse), PTR + FCrDNS, Geofeed | Abuse email ও RPKI status দেখায় |
+| **3. Registry + Routing + DNS** ✅ (code ও test; আসল API-তে প্রথম চালানো বাকি) | ১ সপ্তাহ | RDAP, RIPEstat (prefix, RPKI, neighbours, abuse), PTR + FCrDNS, Geofeed | Abuse email ও RPKI status দেখায় |
 | **4. Anonymity + Exposure** | ১ সপ্তাহ | Cloud ranges, Tor, Private Relay, VPN-ASN list, InternetDB; `update-lists` | Tor exit IP সঠিকভাবে চিহ্নিত হয় |
 | **5. Threat Intel** | ১ সপ্তাহ | AbuseIPDB, GreyNoise, VirusTotal, OTX, abuse.ch, Spamhaus DQS | Key না থাকলে provider "skipped (no key)" দেখায়, crash করে না |
 | **6. Analysis Engine** | ১ সপ্তাহ | Consensus, classification, confidence, reputation/exposure score, anycast | Score-গুলোর unit test আছে |
