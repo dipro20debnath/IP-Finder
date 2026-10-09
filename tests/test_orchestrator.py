@@ -164,7 +164,9 @@ def test_active_provider_needs_opt_in(config):
 def test_profile_filters_providers(config):
     quick = dataclasses.replace(config, profile="quick")
     report = analyze_with("1.1.1.1", quick, offline_plus(Recorder()))
-    assert report.result("recorder").skipped == "not part of the 'quick' profile"
+    assert report.result("recorder").skipped == (
+        "not part of the 'quick' profile (use --profile standard)"
+    )
 
 
 def test_offline_failure_is_fatal(config):

@@ -110,7 +110,50 @@ def build_summary(results: dict, now: datetime | None = None) -> dict:
     anonymity = _anonymity(results)
     if anonymity:
         summary["anonymity"] = anonymity
+    threat = _threat(results)
+    if threat:
+        summary["threat"] = threat
     return summary
+
+
+def _threat(results: dict) -> dict:
+    """Each L9 source's headline fact; the reputation score comes in Phase 6."""
+    out: dict = {}
+    abuse = _ok_data(results, "abuseipdb")
+    if abuse:
+        out["abuseipdb_score"] = abuse.get("score")
+        out["abuseipdb_reports"] = abuse.get("total_reports")
+    grey = _ok_data(results, "greynoise")
+    if grey:
+        out["greynoise"] = {k: grey.get(k) for k in ("classification", "noise", "riot", "name")}
+    vt = _ok_data(results, "virustotal")
+    if vt.get("found"):
+        stats = vt.get("stats") or {}
+        out["virustotal_malicious"] = stats.get("malicious", 0)
+        out["virustotal_suspicious"] = stats.get("suspicious", 0)
+        out["virustotal_engines"] = vt.get("engines")
+    otx = _ok_data(results, "otx")
+    if otx:
+        out["otx_pulses"] = otx.get("pulse_count")
+    for name, key, field in (
+        ("threatfox", "threatfox_iocs", "total"),
+        ("urlhaus", "urlhaus_urls", "url_count"),
+    ):
+        data = _ok_data(results, name)
+        if data:
+            out[key] = data.get(field, 0) if data.get("found") else 0
+    for name, key, field in (
+        ("feodo", "feodo_c2", "listed"),
+        ("spamhaus", "spamhaus_abuse_listed", "abuse_listed"),
+        ("spamhaus-drop", "spamhaus_drop", "listed"),
+    ):
+        data = _ok_data(results, name)
+        if data:
+            out[key] = data.get(field)
+    spamhaus = _ok_data(results, "spamhaus")
+    if spamhaus.get("lists"):
+        out["spamhaus_lists"] = [entry["list"] for entry in spamhaus["lists"]]
+    return out
 
 
 def _anonymity(results: dict) -> dict:

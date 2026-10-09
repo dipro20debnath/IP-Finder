@@ -43,12 +43,13 @@ async def send(
     limiter=None,
     params: dict | None = None,
     json: Any = None,
+    data: dict | None = None,
     headers: dict | None = None,
     ok_statuses: tuple[int, ...] = (200,),
     auth: httpx.Auth | tuple[str, str] | None = None,
 ) -> httpx.Response:
     """Send a request; any status outside ``ok_statuses`` raises ProviderError.
-    HTTP 429 pauses ``limiter`` (if given)."""
+    HTTP 429 pauses ``limiter`` (if given). ``data`` is sent as an HTML form."""
     host = urlsplit(url).hostname
     try:
         response = await session.http.request(
@@ -56,6 +57,7 @@ async def send(
             url,
             params=params,
             json=json,
+            data=data,
             headers=headers,
             **({"auth": auth} if auth is not None else {}),
         )

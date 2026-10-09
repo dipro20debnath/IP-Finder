@@ -182,12 +182,12 @@ Database সাপ্তাহিক update হয়, তাই এটা "স�
 | Source | কী দেয় | Access |
 |---|---|---|
 | **AbuseIPDB** | Abuse confidence score (0–100), report সংখ্যা, category, usage type | Free key, দিনে ~1,000 check |
-| **GreyNoise Community** | `noise` (internet scanner কি না), `riot` (পরিচিত benign service), `classification` (benign/malicious/unknown) | Free; অফিসিয়াল docs অনুযায়ী free account-এ সপ্তাহে ~50 lookup |
+| **GreyNoise Community** | `noise` (internet scanner কি না), `riot` (পরিচিত benign service), `classification` (benign/malicious/unknown) | Free; অফিসিয়াল docs অনুযায়ী free account-এ সপ্তাহে ~50 lookup; শুধু IPv4 |
 | **VirusTotal** | কতগুলো security vendor IP-কে malicious বলছে | Free key: 4 req/min, 500/day, non-commercial |
 | **AlienVault OTX** | Threat "pulse"-এ উল্লেখ আছে কি না | Free key |
 | **abuse.ch** (ThreatFox, URLhaus, Feodo Tracker) | Malware C2 / botnet IOC | **30 June 2025 থেকে free `Auth-Key` বাধ্যতামূলক** |
 | **Spamhaus ZEN** (DNSBL) | Spam/exploit source listing | নিজের resolver বা free **DQS key** লাগবে। 8.8.8.8/1.1.1.1-এর মতো public resolver দিয়ে query করলে `127.255.255.254` (blocked) আসে, যাকে listing ভাবা যাবে না |
-| **FireHOL / Feodo blocklists** | Aggregated IP blocklist | Free download, local match |
+| **Feodo Tracker / Spamhaus DROP** | Botnet C2 ও অপরাধীদের netblock/ASN list | Free download, local match (`update-lists`); কাউকে address পাঠায় না, তাই `standard` profile-এও চলে |
 
 ### L10: Active Probing ⚠️ (default OFF)
 
@@ -621,7 +621,7 @@ python -m ipfinder update-lists                       # Tor, cloud ranges, Priva
 | **2. Geo + Network** ✅ (code ও test; আসল API-তে প্রথম চালানো বাকি) | ১ সপ্তাহ | ip-api (single+batch), IPinfo Lite, MaxMind, Team Cymru, PeeringDB; rate limiter; cache | `quick` profile কাজ করে; 45/min limit কখনো ভাঙে না |
 | **3. Registry + Routing + DNS** ✅ (code ও test; আসল API-তে প্রথম চালানো বাকি) | ১ সপ্তাহ | RDAP, RIPEstat (prefix, RPKI, neighbours, abuse), PTR + FCrDNS, Geofeed | Abuse email ও RPKI status দেখায় |
 | **4. Anonymity + Exposure** ✅ (code ও test; AWS ও X4BNet list live দিয়ে যাচাই) | ১ সপ্তাহ | Cloud ranges, Tor, Private Relay, VPN-ASN list, InternetDB; `update-lists` | Tor exit IP সঠিকভাবে চিহ্নিত হয় |
-| **5. Threat Intel** | ১ সপ্তাহ | AbuseIPDB, GreyNoise, VirusTotal, OTX, abuse.ch, Spamhaus DQS | Key না থাকলে provider "skipped (no key)" দেখায়, crash করে না |
+| **5. Threat Intel** ✅ (code ও test; আসল API-তে প্রথম চালানো বাকি) | ১ সপ্তাহ | AbuseIPDB, GreyNoise, VirusTotal, OTX, abuse.ch, Spamhaus DQS | Key না থাকলে provider "skipped (no key)" দেখায়, crash করে না |
 | **6. Analysis Engine** | ১ সপ্তাহ | Consensus, classification, confidence, reputation/exposure score, anycast | Score-গুলোর unit test আছে |
 | **7. Active Mode** | ৩–৪ দিন | Ping, traceroute, TLS cert, RTT plausibility; confirmation prompt | `--active` ছাড়া কখনো চলে না |
 | **8. Reporting** | ১ সপ্তাহ | Rich terminal, JSON, CSV, HTML + folium map, batch progress bar | HTML report browser-এ map সহ খোলে |

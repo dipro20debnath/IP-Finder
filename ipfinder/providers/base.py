@@ -33,6 +33,7 @@ class Provider(ABC):
     stage: int = 1  # 0 = local analysis, 1 = independent lookups, 2 = needs stage-1 data
     profiles: tuple[str, ...] = ("standard", "full")
     requires_key: str | None = None  # environment variable name, e.g. "ABUSEIPDB_API_KEY"
+    optional_key: str | None = None  # a key that raises limits but is not required
     needs_public_ip: bool = True  # skip when the address is private/reserved
     active: bool = False  # sends packets to the target; runs only in --active mode
     cache_ttl: int = 0  # seconds; 0 = never cache
@@ -45,7 +46,7 @@ class Provider(ABC):
     def unavailable_reason(self, config: Config) -> str | None:
         """Reasons that depend only on settings (profile, key, files)."""
         if config.profile not in self.profiles:
-            return f"not part of the '{config.profile}' profile"
+            return f"not part of the '{config.profile}' profile (use --profile {self.profiles[0]})"
         if self.active and not config.active_mode:
             return "active probing is off (use --active on systems you are authorised to test)"
         if self.requires_key and not config.key_for(self.requires_key):

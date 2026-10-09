@@ -132,8 +132,9 @@ def test_sources(capsys, monkeypatch):
     assert "ready" in lines["ip-api"]
     assert "ready" in lines["ipinfo-lite"]  # token set
     assert "database not found" in lines["maxmind"]
-    assert "planned (Phase 5)" in lines["abuseipdb"]
-    assert "ABUSEIPDB_API_KEY missing" in lines["abuseipdb"]
+    assert "no API key (ABUSEIPDB_API_KEY in .env)" in lines["abuseipdb"]
+    assert "GREYNOISE_API_KEY (optional)" in lines["greynoise"]
+    assert "planned (Phase 7)" in lines["active"]
 
 
 def test_version(capsys):
@@ -289,7 +290,9 @@ def test_quick_profile_uses_only_ip_api(capsys, no_stdin, fake_api):
         r["provider"]: r for r in json.loads(capsys.readouterr().out)["reports"][0]["results"]
     }
     assert results["ip-api"]["ok"] is True
-    assert results["team-cymru"]["skipped"] == "not part of the 'quick' profile"
+    assert results["team-cymru"]["skipped"] == (
+        "not part of the 'quick' profile (use --profile standard)"
+    )
 
 
 def test_cache_file_and_no_cache(capsys, no_stdin, fake_api, tmp_path):

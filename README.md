@@ -1,10 +1,77 @@
-# IP Finder v2 (Phase 0–4)
+# IP Finder v2 (Phase 0–5)
 
 একটি IP address থেকে **আইনসঙ্গতভাবে যা যা জানা সম্ভব**, তা ধাপে ধাপে বের করার Python tool। পুরো roadmap: [ADVANCED_PLAN.md](ADVANCED_PLAN.md)।
 
-এই version-এ আছে **Phase 0 (setup)**, **Phase 1 (offline analysis)**, **Phase 2 (location ও network: ip-api, IPinfo Lite, MaxMind GeoLite2, Team Cymru, PeeringDB)**, **Phase 3 (registry, routing ও DNS: RDAP, RIPEstat BGP/RPKI, reverse DNS + FCrDNS, Geofeed)** আর **Phase 4 (anonymity ও exposure: Tor exit, iCloud Private Relay, cloud/CDN range, VPN/datacenter list, Shodan InternetDB; `update-lists`)**। কোনো API key ছাড়াই চলে; key বা database যোগ করলে আরও source যুক্ত হয়। Threat intelligence (AbuseIPDB, GreyNoise…) আসবে Phase 5-এ।
+এই version-এ আছে **Phase 0 (setup)**, **Phase 1 (offline analysis)**, **Phase 2 (location ও network: ip-api, IPinfo Lite, MaxMind GeoLite2, Team Cymru, PeeringDB)**, **Phase 3 (registry, routing ও DNS: RDAP, RIPEstat BGP/RPKI, reverse DNS + FCrDNS, Geofeed)** **Phase 4 (anonymity ও exposure: Tor exit, iCloud Private Relay, cloud/CDN range, VPN/datacenter list, Shodan InternetDB; `update-lists`)** আর **Phase 5 (threat intelligence: AbuseIPDB, GreyNoise, VirusTotal, OTX, ThreatFox, URLhaus, Spamhaus; Feodo Tracker ও Spamhaus DROP list)**। কোনো API key ছাড়াই চলে; key বা database যোগ করলে আরও source যুক্ত হয়। সব source মিলিয়ে score আর verdict আসবে Phase 6-এ।
 
 > ⚠️ IP geolocation আনুমানিক। একটি IP address কোনো ব্যক্তিকে শনাক্ত করে না।
+
+---
+
+## Phase 5: threat intelligence
+
+**কেন শুধু `--profile full`-এ:** এই source-গুলো চালালে address-টা ৭টা তৃতীয় পক্ষের কাছে যায়, আর বেশিরভাগের free quota ছোট (VirusTotal দিনে 500টা, GreyNoise সপ্তাহে 50টা)। তাই সাধারণ lookup-এ এগুলো চলে না; চালাতে হয় `ipfinder --profile full <ip>` দিয়ে। Key না থাকলে source-টা "no API key (... in .env)" দেখিয়ে skip হয়, কখনো crash করে না।
+
+| Source | কী বলে | Key (সব free) | সীমা |
+|---|---|---|---|
+| **AbuseIPDB** | Abuse confidence score (0–100), গত 90 দিনে কতবার, কতজন report করেছে, কী কারণে (Brute-Force, SSH, Port Scan…), usage type | `ABUSEIPDB_API_KEY` | দিনে 1,000 check; বাকি quota report-এ থাকে |
+| **GreyNoise Community** | Internet-জুড়ে scan করছে কিনা ("noise"), নাকি পরিচিত ভালো service ("RIOT", যেমন Google Public DNS); benign / malicious / unknown | ঐচ্ছিক `GREYNOISE_API_KEY` | Key ছাড়া দিনে অল্প কয়েকটা, free account-এ সপ্তাহে 50টা। শুধু IPv4 (GreyNoise-এর নিজের SDK IPv6 নেয় না) |
+| **VirusTotal** | ~90টা security vendor-এর engine-এর মধ্যে কতগুলো malicious/suspicious বলছে, কোন engine কী বলছে, community vote | `VIRUSTOTAL_API_KEY` | মিনিটে 4টা (IP Finder নিজেই মানে), দিনে 500টা; non-commercial |
+| **AlienVault OTX** | কতগুলো threat "pulse"-এ address-টা আছে, সাম্প্রতিক pulse-এর নাম ও malware family, allow-list-এ থাকলে সেটাও | `OTX_API_KEY` | — |
+| **ThreatFox** (abuse.ch) | Malware C2 IOC: কোন malware, কোন port, confidence | `ABUSECH_AUTH_KEY` | 30 June 2025 থেকে key বাধ্যতামূলক |
+| **URLhaus** (abuse.ch) | Address থেকে malware ছড়ানো URL, কতগুলো এখনও online (URL "defang" করে দেখায়: `hxxp://`) | `ABUSECH_AUTH_KEY` | একই key |
+| **Spamhaus ZEN** (DNS) | SBL (spam source), CSS, XBL (infected/hijacked device), DROP, PBL | ঐচ্ছিক `SPAMHAUS_DQS_KEY` | Free শুধু কম পরিমাণ, non-commercial query-র জন্য |
+
+**Key ছাড়াই চলে, `standard` profile-এও (local list, কাউকে address পাঠায় না):** `ipfinder update-lists` এখন এগুলোও নামায়:
+
+| List | কী বলে |
+|---|---|
+| **Feodo Tracker** (abuse.ch) | Botnet C2 server কিনা (Dridex, Emotet, QakBot…), কোন port, শেষ কবে online। Takedown-এর পর list প্রায় খালি থাকতে পারে, সেটাও বৈধ |
+| **Spamhaus DROP / DROPv6 / ASN-DROP** | Hijack হওয়া বা অপরাধীদের চালানো netblock আর পুরো network (ASN দিয়ে মেলায়) |
+
+**Spamhaus-এর উত্তর ঠিকভাবে পড়া** (code-গুলো Spamhaus-এর নিজের SpamAssassin rules থেকে নেওয়া):
+
+| উত্তর | মানে |
+|---|---|
+| `127.0.0.2` | SBL: পরিচিত spam source বা spam operation |
+| `127.0.0.3` | CSS: কম-reputation-এর bulk mail sender |
+| `127.0.0.4`–`7` | XBL: infected বা hijacked device (bot, open proxy) |
+| `127.0.0.9` | DROP: অপরাধীদের netblock |
+| `127.0.0.10` / `11` | **PBL: home বা dynamic line, যেখান থেকে সরাসরি mail যাওয়ার কথা নয়। এটা abuse-এর চিহ্ন নয়** |
+| `127.255.255.254` | **Listing নয়:** query public resolver (8.8.8.8, 1.1.1.1) দিয়ে গেছে, Spamhaus উত্তর দিতে অস্বীকার করেছে |
+
+আগে RFC 5782-এর test entry (`2.0.0.127.zen.spamhaus.org`) জিজ্ঞেস করা হয়। সেটা উত্তর না দিলে আপনার DNS Spamhaus পর্যন্ত পৌঁছায় না, তখন IP Finder "not listed" বলে না, সমস্যাটা জানায়। DQS key DNS query-র নামের ভেতরে থাকে, তাই কোনো error বার্তায় query-র নাম লেখা হয় না।
+
+**সৎ সীমাবদ্ধতা:**
+- Listing মানে কেউ এই address থেকে কিছু দেখেছে বা report করেছে, কে করেছে তা নয়। CGNAT, VPN, cloud-এর মতো ভাগ করা address অন্যদের ইতিহাস বয়ে বেড়ায়।
+- VirusTotal-এ ১–২টা engine flag করা খুব সাধারণ ব্যাপার; কোন engine কী বলছে দেখুন।
+- OTX pulse আর AbuseIPDB report সাধারণ user-দের লেখা। IP Finder report-এর comment রাখে না, শুধু category আর তারিখ রাখে।
+- একসাথে মিলিয়ে একটা reputation score Phase 6-এ আসবে। এখন প্রতিটা source আলাদাভাবে দেখায়।
+
+### Test data দিয়ে output (সংক্ষেপিত)
+
+এখানে সংখ্যাগুলো documentation-এর উদাহরণ থেকে, **আসল address-এর data নয়**। এই environment থেকে এই service-গুলোতে পৌঁছানো যায় না।
+
+```text
+$ ipfinder --profile full 1.2.3.4
+│ Threat reputation
+│   AbuseIPDB           score 100/100 - 2 report(s) from 2 reporter(s) in 90 days, last 2018-12-20
+│     reported for      Brute-Force (2), SSH (1)
+│   GreyNoise           malicious - scanning the internet, last seen 2026-10-08
+│   VirusTotal          3 of 94 engines say malicious, 1 suspicious (analysed 2026-10-08)
+│     flagged by        EngineA (malware), EngineC (phishing), engineB (suspicious)
+│   OTX pulses          2
+│                       QakBot C2 servers [QakBot]
+│   ThreatFox           QakBot - Indicator that identifies a botnet command&control server (C&C)
+│                       (1.2.3.4:443, confidence 100%)
+│   URLhaus             3 malware URL(s), 1 online, first seen 2026-09-01
+│                       hxxp://1.2.3.4/bins/mozi.m (online)
+│   Spamhaus ZEN        XBL: Exploits Block List: an infected or hijacked device (bot, open proxy)
+│   Spamhaus ZEN        PBL (Spamhaus): Policy Block List: an end-user (often dynamic) range
+│                       that should not send mail directly; this is not a sign of abuse
+```
+
+> **যাচাইয়ের অবস্থা:** প্রতিটা source-এর format নেওয়া হয়েছে তার নিজের documentation বা official code থেকে: AbuseIPDB-এর check উদাহরণ, GreyNoise-এর README, OTX-এর Python SDK, abuse.ch-এর নিজের sample script ও Elastic-এর abuse.ch integration, Spamhaus-এর SpamAssassin rules। আসল service-এর বিরুদ্ধে প্রথমবার চালানো হবে আপনার computer-এ।
 
 ---
 
@@ -233,6 +300,7 @@ ipfinder lookup -f json -o report.json 8.8.8.8
 ipfinder lookup -i ips.txt -f json        # file থেকে (প্রতি লাইনে একটি IP, # = comment)
 cat ips.txt | ipfinder lookup -f json     # stdin থেকে
 ipfinder lookup --profile quick 8.8.8.8   # শুধু offline + ip-api (দ্রুত)
+ipfinder lookup --profile full 8.8.8.8    # + threat intelligence (key লাগে, address তৃতীয় পক্ষে যায়)
 ipfinder lookup --no-cache 8.8.8.8        # cache না পড়ে, না লিখে
 ipfinder me                               # নিজের public IP
 ipfinder sources                          # প্রতিটা source প্রস্তুত কি না, কী লাগবে
@@ -331,8 +399,15 @@ IP-Finder/
 │   │   ├── cloud_ranges.py     # AWS / Google / Azure / Oracle / Cloudflare / Fastly
 │   │   ├── vpn_lists.py        # X4BNet VPN and datacenter networks (by prefix and ASN)
 │   │   ├── internetdb.py       # Shodan InternetDB: ports, CPEs, possible CVEs
+│   │   ├── abuseipdb.py        # AbuseIPDB score, reports, categories
+│   │   ├── greynoise.py        # GreyNoise Community: noise / RIOT
+│   │   ├── virustotal.py       # VirusTotal engine verdicts (4/min limiter)
+│   │   ├── otx.py              # AlienVault OTX pulses
+│   │   ├── abusech.py          # ThreatFox + URLhaus (Auth-Key)
+│   │   ├── spamhaus.py         # Spamhaus ZEN over DNS (RFC 5782 test entry first)
+│   │   ├── threat_lists.py     # Feodo Tracker + Spamhaus DROP (offline)
 │   │   ├── common.py           # shared normalisation helpers
-│   │   └── __init__.py         # registry + planned providers (Phase 5–7)
+│   │   └── __init__.py         # registry + planned providers (Phase 7)
 │   ├── lists/
 │   │   ├── specs.py            # every downloadable list: URL, format, parser, freshness
 │   │   ├── index.py            # longest-prefix lookup (300k prefixes load in ~1-1.5 s, lookups in microseconds)
@@ -381,7 +456,7 @@ python scripts/capture_fixtures.py 8.8.8.8 --only ip-api rdap   # IP আগে, 
 ```
 
 - Key ছাড়া চলে: ip-api, RDAP, RIPEstat (prefix-overview, routing-status, abuse-contact), Shodan InternetDB, GreyNoise Community (key ঐচ্ছিক)।
-- Key লাগে: IPinfo Lite, AbuseIPDB, VirusTotal (key না থাকলে skip হয়)।
+- Key লাগে: IPinfo Lite, AbuseIPDB, VirusTotal (key না থাকলে skip হয়)। OTX আর abuse.ch-এর API (POST) এই script-এ নেই; সেগুলো `ipfinder --profile full` দিয়ে দেখা যায়।
 - API key কখনো fixture file-এ লেখা হয় না (URL redact করা হয়, request header save হয় না)।
 - Rate limit মানা হয়: ip-api-তে 45/min (`X-Rl`/`X-Ttl` header পড়ে অপেক্ষা করে), VirusTotal-এ 4/min।
 
@@ -398,7 +473,8 @@ python scripts/capture_fixtures.py 8.8.8.8 --only ip-api rdap   # IP আগে, 
 | 2 | ip-api, IPinfo Lite, MaxMind, Team Cymru, PeeringDB; cache, rate limiter | ✅ (code ও test; আসল API-তে প্রথম চালানো বাকি) |
 | 3 | RDAP, RIPEstat (BGP/RPKI), DNS/FCrDNS, Geofeed | ✅ (code ও test; আসল API-তে প্রথম চালানো বাকি) |
 | 4 | Tor, Private Relay, cloud range, VPN/datacenter list, InternetDB; `update-lists` | ✅ (code ও test; AWS ও X4BNet list live দিয়ে যাচাই, বাকি source আপনার computer-এ প্রথম চালানো বাকি) |
-| 5–10 | Threat intel, scoring, active mode, reports, dashboard | ⏳ |
+| 5 | AbuseIPDB, GreyNoise, VirusTotal, OTX, ThreatFox, URLhaus, Spamhaus ZEN; Feodo ও Spamhaus DROP list | ✅ (code ও test; আসল API-তে প্রথম চালানো বাকি) |
+| 6–10 | Scoring, active mode, reports, dashboard | ⏳ |
 
 `ipfinder sources` চালালে প্রতিটি data source-এর phase ও API-key অবস্থা দেখা যায়।
 

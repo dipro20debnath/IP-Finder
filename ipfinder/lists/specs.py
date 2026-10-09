@@ -17,6 +17,11 @@ Formats (checked 2026-10):
   Fastly API              {"addresses", "ipv6_addresses"}
   iCloud Private Relay    RFC 8805 CSV: prefix,country,region,city,postal
   X4BNet lists_vpn (MIT)  CIDR per line; ASN lists "AS9009 # M247, GB (NordVPN)"
+  Feodo Tracker           [{"ip_address", "port", "status", "malware", "first_seen",
+                          "last_online", "as_name", "country"}] (abuse.ch botnet C2s)
+  Spamhaus DROP           newline-delimited JSON: {"cidr", "sblid", "rir"} per line and a
+                          final {"type": "metadata", "timestamp", ...} line; ASN-DROP
+                          lines carry "asn" (older text format "cidr ; SBLnnn" also read)
 """
 
 from __future__ import annotations
@@ -26,6 +31,7 @@ import json
 import re
 from collections.abc import Callable
 from dataclasses import dataclass, field
+from datetime import datetime, timezone
 from typing import Any
 
 from ipfinder.lists.index import PrefixIndex
@@ -52,7 +58,7 @@ class Dataset:
 class ListSpec:
     name: str
     title: str
-    group: str  # tor | cloud | relay | vpn
+    group: str  # tor | cloud | relay | vpn | threat
     url: str
     filename: str
     parse: Callable[[str], Dataset]
@@ -63,6 +69,7 @@ class ListSpec:
     source: str = ""  # who publishes it, terms
     label: str = ""  # cloud lists: the company name shown in reports
     page_pattern: str | None = None  # the real file URL is a link on the page at ``url``
+    key_header: tuple[str, str] | None = None  # (env key, header) sent when the key is set
 
 
 def _check(dataset: Dataset, spec_min: int, what: str) -> Dataset:
@@ -231,6 +238,72 @@ def parse_asn_lines(text: str) -> Dataset:
         match = _ASN_LINE.match(line)
         if match:
             dataset.asns[int(match.group(1))] = (match.group(2) or "").strip()
+    return dataset
+
+
+def parse_feodo(text: str) -> Dataset:
+    """abuse.ch Feodo Tracker botnet C2 list. It can legitimately be short or empty
+    (after a takedown), so only the JSON shape is checked."""
+    data = _json(text)
+    if not isinstance(data, list):
+        raise ValueError("unexpected Feodo Tracker format")
+    dataset = Dataset()
+    keys = ("port", "status", "malware", "first_seen", "last_online", "as_name", "country")
+    for entry in data:
+        if isinstance(entry, dict) and isinstance(entry.get("ip_address"), str):
+            value = {k: entry[k] for k in keys if entry.get(k) not in (None, "")}
+            dataset.index.add(entry["ip_address"], value)
+    return dataset
+
+
+def _ndjson(text: str):
+    for line in text.splitlines():
+        line = line.strip()
+        if line.startswith("{"):
+            try:
+                record = json.loads(line)
+            except ValueError:
+                continue
+            if isinstance(record, dict):
+                yield record
+
+
+def _metadata_date(record: dict) -> str | None:
+    stamp = record.get("timestamp")
+    if isinstance(stamp, (int, float)):
+        return datetime.fromtimestamp(stamp, timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
+    return None
+
+
+def parse_drop(text: str) -> Dataset:
+    dataset = Dataset()
+    for record in _ndjson(text):
+        if record.get("type") == "metadata":
+            dataset.published = _metadata_date(record)
+        elif isinstance(record.get("cidr"), str):
+            dataset.index.add(record["cidr"], record.get("sblid"))
+    for line in text.splitlines():  # the older text format: "1.10.16.0/20 ; SBL256894"
+        if ";" in line and not line.lstrip().startswith(("{", ";")):
+            cidr, _, sblid = line.partition(";")
+            dataset.index.add(cidr.strip(), sblid.strip() or None)
+    return dataset
+
+
+def parse_asndrop(text: str) -> Dataset:
+    dataset = Dataset()
+    for record in _ndjson(text):
+        if record.get("type") == "metadata":
+            dataset.published = _metadata_date(record)
+            continue
+        asn = record.get("asn")
+        if isinstance(asn, str) and asn.upper().removeprefix("AS").isdigit():
+            asn = int(asn.upper().removeprefix("AS"))
+        if isinstance(asn, int) and not isinstance(asn, bool):
+            label = record.get("asname") or record.get("domain") or ""
+            country = record.get("cc")
+            if country:
+                label = f"{label} ({country})".strip()
+            dataset.asns[asn] = str(label)
     return dataset
 
 
@@ -445,6 +518,59 @@ SPECS: dict[str, ListSpec] = {
             refresh=DAY,
             stale_after=60 * DAY,
             source=X4B_SOURCE,
+        ),
+        _spec(
+            "feodo",
+            "abuse.ch Feodo Tracker botnet C2 servers",
+            "threat",
+            "https://feodotracker.abuse.ch/downloads/ipblocklist.json",
+            "feodo-ipblocklist.json",
+            parse_feodo,
+            0,
+            "Feodo Tracker",
+            refresh=HOUR,
+            stale_after=DAY,
+            source="abuse.ch Feodo Tracker (regenerated every 5 minutes)",
+            key_header=("ABUSECH_AUTH_KEY", "Auth-Key"),
+        ),
+        _spec(
+            "spamhaus-drop-v4",
+            "Spamhaus DROP (IPv4 netblocks run by criminals)",
+            "threat",
+            "https://www.spamhaus.org/drop/drop_v4.json",
+            "spamhaus-drop-v4.json",
+            parse_drop,
+            100,
+            "Spamhaus DROP",
+            refresh=12 * HOUR,
+            stale_after=7 * DAY,
+            source="The Spamhaus Project",
+        ),
+        _spec(
+            "spamhaus-drop-v6",
+            "Spamhaus DROPv6 (IPv6 netblocks run by criminals)",
+            "threat",
+            "https://www.spamhaus.org/drop/drop_v6.json",
+            "spamhaus-drop-v6.json",
+            parse_drop,
+            1,
+            "Spamhaus DROPv6",
+            refresh=12 * HOUR,
+            stale_after=7 * DAY,
+            source="The Spamhaus Project",
+        ),
+        _spec(
+            "spamhaus-asndrop",
+            "Spamhaus ASN-DROP (networks run by criminals)",
+            "threat",
+            "https://www.spamhaus.org/drop/asndrop.json",
+            "spamhaus-asndrop.json",
+            parse_asndrop,
+            10,
+            "Spamhaus ASN-DROP",
+            refresh=12 * HOUR,
+            stale_after=7 * DAY,
+            source="The Spamhaus Project",
         ),
     )
 }

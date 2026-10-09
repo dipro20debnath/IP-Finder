@@ -78,7 +78,8 @@ def _build_parser() -> argparse.ArgumentParser:
         "--profile",
         choices=PROFILES,
         default=None,
-        help="quick = offline + ip-api; standard (default) and full = every available source",
+        help="quick = offline + ip-api; standard (default) = every source that needs no "
+        "threat-intel key; full = also threat intelligence (sends the address to more services)",
     )
     output.add_argument(
         "--no-cache", action="store_true", help="do not read or write data/cache.sqlite"
@@ -279,6 +280,8 @@ def _cmd_sources(console: Console) -> int:
         status = Text("ready", style="green") if reason is None else Text(reason, style="yellow")
         if p.requires_key:
             needs = p.requires_key
+        elif p.optional_key:
+            needs = f"{p.optional_key} (optional)"
         elif p.required_files(config):
             needs = "GeoLite2 .mmdb files"
         elif isinstance(p, ListProvider):

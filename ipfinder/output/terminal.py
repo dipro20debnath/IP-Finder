@@ -676,6 +676,166 @@ def _exposure(report: IPReport) -> list[Table]:
     return [_section("Exposed services (Shodan InternetDB)", rows)]
 
 
+def _score_style(value: int, bad: int, warn: int = 1) -> str:
+    return "bold red" if value >= bad else "yellow" if value >= warn else "green"
+
+
+def _threat(report: IPReport) -> list[Table]:
+    rows: list[tuple[str, object]] = []
+
+    abuse = _ok(report, "abuseipdb")
+    if abuse:
+        score = abuse.get("score") or 0
+        text = f"score {score}/100 - {abuse.get('total_reports', 0):,} report(s)"
+        if abuse.get("distinct_reporters"):
+            text += f" from {abuse['distinct_reporters']:,} reporter(s)"
+        text += f" in {abuse.get('max_age_days', 90)} days"
+        if abuse.get("last_reported"):
+            text += f", last {abuse['last_reported'][:10]}"
+        rows.append(("AbuseIPDB", _safe(text, _score_style(score, 50))))
+        if abuse.get("categories"):
+            reasons = ", ".join(f"{c['name']} ({c['reports']})" for c in abuse["categories"][:6])
+            rows.append(("  reported for", reasons))
+        if abuse.get("usage_type"):
+            rows.append(("  usage type", abuse["usage_type"]))
+        if abuse.get("is_whitelisted"):
+            rows.append(
+                ("  note", _safe("on AbuseIPDB's allow-list (a known good service)", "dim"))
+            )
+
+    grey = _ok(report, "greynoise")
+    if grey:
+        if not grey.get("observed"):
+            value = _safe("not observed scanning the internet", "green")
+        elif grey.get("riot"):
+            value = _safe(
+                f"known business service ({grey.get('name') or 'RIOT'}), "
+                f"classification {grey.get('classification', 'unknown')}",
+                "green",
+            )
+        else:
+            cls = grey.get("classification") or "unknown"
+            style = {"malicious": "bold red", "benign": "green"}.get(cls, "yellow")
+            seen = f", last seen {grey['last_seen']}" if grey.get("last_seen") else ""
+            actor = f" ({grey['name']})" if grey.get("name") and grey["name"] != "unknown" else ""
+            noise = "scanning the internet" if grey.get("noise") else "observed"
+            value = _safe(f"{cls} - {noise}{actor}{seen}", style)
+        rows.append(("GreyNoise", value))
+
+    vt = _ok(report, "virustotal")
+    if vt:
+        if not vt.get("found"):
+            rows.append(("VirusTotal", _safe(vt.get("note", "no record"), "dim")))
+        else:
+            stats = vt.get("stats") or {}
+            bad, sus = stats.get("malicious", 0), stats.get("suspicious", 0)
+            text = f"{bad} of {vt.get('engines', 0)} engines say malicious, {sus} suspicious"
+            if vt.get("last_analysis"):
+                text += f" (analysed {vt['last_analysis']})"
+            rows.append(("VirusTotal", _safe(text, _score_style(bad, 3))))
+            if vt.get("flagged"):
+                names = ", ".join(
+                    f"{f['engine']} ({f.get('result') or f['category']})" for f in vt["flagged"][:5]
+                )
+                rows.append(("  flagged by", names))
+            votes = vt.get("votes") or {}
+            bad_votes, good_votes = votes.get("malicious", 0), votes.get("harmless", 0)
+            if bad_votes or good_votes:
+                rows.append(("  community votes", f"{bad_votes} malicious, {good_votes} harmless"))
+
+    otx = _ok(report, "otx")
+    if otx:
+        count = otx.get("pulse_count") or 0
+        rows.append(("OTX pulses", _safe(f"{count}", _score_style(count, 5))))
+        for pulse in otx.get("pulses", [])[:3]:
+            families = (
+                f" [{', '.join(pulse['malware_families'])}]"
+                if pulse.get("malware_families")
+                else ""
+            )
+            rows.append(("", f"{pulse.get('name', '?')}{families}"))
+        for message in otx.get("validation", [])[:2]:
+            rows.append(("  allow-list", _safe(message, "green")))
+
+    tfox = _ok(report, "threatfox")
+    if tfox:
+        if tfox.get("found"):
+            for ioc in tfox.get("iocs", [])[:3]:
+                text = f"{ioc.get('malware', '?')} - {ioc.get('threat_type', '')} ({ioc.get('ioc')}"
+                text += (
+                    f", confidence {ioc['confidence']}%)"
+                    if ioc.get("confidence") is not None
+                    else ")"
+                )
+                rows.append(("ThreatFox", _safe(text, "bold red")))
+        else:
+            rows.append(("ThreatFox", _safe("not listed", "green")))
+
+    haus = _ok(report, "urlhaus")
+    if haus:
+        if haus.get("found"):
+            text = f"{haus.get('url_count', 0)} malware URL(s), {haus.get('online', 0)} online"
+            if haus.get("first_seen"):
+                text += f", first seen {haus['first_seen'][:10]}"
+            rows.append(("URLhaus", _safe(text, "bold red")))
+            for url in haus.get("urls", [])[:2]:
+                rows.append(("", f"{url['url']} ({url.get('status', '?')})"))
+        else:
+            rows.append(("URLhaus", _safe(haus.get("note", "not listed"), "green")))
+
+    feodo = _ok(report, "feodo")
+    if feodo:
+        if feodo.get("listed"):
+            for entry in feodo.get("entries", [])[:3]:
+                text = f"botnet C2: {entry.get('malware', '?')} on port {entry.get('port', '?')}"
+                text += f", {entry.get('status', 'status unknown')}"
+                if entry.get("last_online"):
+                    text += f", last online {entry['last_online']}"
+                rows.append(("Feodo Tracker", _safe(text, "bold red")))
+        else:
+            rows.append(("Feodo Tracker", _safe("not listed", "green")))
+
+    spamhaus = _ok(report, "spamhaus")
+    if spamhaus:
+        if not spamhaus.get("listed"):
+            rows.append(("Spamhaus ZEN", _safe(f"not listed ({spamhaus.get('zone')})", "green")))
+        for entry in spamhaus.get("lists", []):
+            style = "bold red" if entry.get("abuse") else "yellow"
+            rows.append(("Spamhaus ZEN", _safe(f"{entry['list']}: {entry['meaning']}", style)))
+
+    drop = _ok(report, "spamhaus-drop")
+    if drop:
+        if drop.get("listed"):
+            for item in drop.get("evidence", []):
+                label = item.get("sblid") or item.get("name") or ""
+                rows.append(
+                    (
+                        "Spamhaus DROP",
+                        _safe(f"LISTED - {item['value']} {label}".strip(), "bold red"),
+                    )
+                )
+        else:
+            rows.append(("Spamhaus DROP", _safe("not listed", "green")))
+        rows += _list_notes(drop)
+    if feodo:
+        rows += _list_notes(feodo)
+
+    if not rows:
+        return []
+    rows.append(
+        (
+            "Note",
+            Text(
+                "A listing means someone reported or detected activity from this address, "
+                "not who was behind it. Shared addresses (CGNAT, VPN, cloud) carry other "
+                "users' history.",
+                style="dim",
+            ),
+        )
+    )
+    return [_section("Threat reputation", rows)]
+
+
 def _flags(report: IPReport) -> list[Table]:
     data = _ok(report, "ip-api")
     if not data:
@@ -718,7 +878,7 @@ def render_report(report: IPReport, verbose: bool = False) -> Panel:
     parts: list = [_summary(report, data)]
     parts += _location(report) + _network(report) + _routing(report)
     parts += _registration(report) + _abuse(report) + _reverse_dns(report)
-    parts += _anonymity(report) + _flags(report) + _exposure(report)
+    parts += _anonymity(report) + _flags(report) + _exposure(report) + _threat(report)
     parts.append(_representations(data))
     parts += _ipv4(data) if report.version == 4 else _ipv6(data)
     parts += _sources(report)
@@ -764,5 +924,9 @@ def print_reports(
         if any((r.result("internetdb") or ProviderResult("", "", False)).ok for r in reports):
             console.print(
                 Text("Shodan InternetDB data is free for non-commercial use only.", style="dim")
+            )
+        if any((r.result("virustotal") or ProviderResult("", "", False)).ok for r in reports):
+            console.print(
+                Text("The VirusTotal public API is for non-commercial use only.", style="dim")
             )
         console.print(Text(f"[!] {DISCLAIMER}", style="yellow"))

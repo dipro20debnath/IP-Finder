@@ -122,7 +122,10 @@ class ListStore:
                         "download link not found on the page (its layout may have changed)"
                     )
                 url = match.group(0)
-            data, _ = await fetch_bytes(session, url, max_bytes=spec.max_bytes)
+            headers = None
+            if spec.key_header and session.config.key_for(spec.key_header[0]):
+                headers = {spec.key_header[1]: session.config.key_for(spec.key_header[0])}
+            data, _ = await fetch_bytes(session, url, max_bytes=spec.max_bytes, headers=headers)
             try:
                 dataset = spec.parse(data.decode("utf-8", "replace"))
             except ValueError as exc:
