@@ -90,12 +90,25 @@ def read_dotenv(path: str | Path) -> dict[str, str]:
     return values
 
 
+# Path settings that can be overridden from the environment / .env
+_PATH_SETTINGS = {
+    "IPFINDER_OUI_DB": "oui_db_path",
+    "IPFINDER_CACHE": "cache_path",
+    "IPFINDER_MAXMIND_CITY_DB": "maxmind_city_db",
+    "IPFINDER_MAXMIND_ASN_DB": "maxmind_asn_db",
+}
+
+
 @dataclass(frozen=True)
 class Config:
     profile: str = "standard"
     active_mode: bool = False
     timeout: float = 10.0
+    use_cache: bool = True
     oui_db_path: Path = Path("data/oui.csv")
+    cache_path: Path = Path("data/cache.sqlite")
+    maxmind_city_db: Path = Path("data/GeoLite2-City.mmdb")
+    maxmind_asn_db: Path = Path("data/GeoLite2-ASN.mmdb")
     api_keys: Mapping[str, str] = field(default_factory=dict)
 
     @classmethod
@@ -112,8 +125,9 @@ class Config:
         )
         keys = {k: merged[k] for k in KNOWN_KEYS if merged.get(k)}
         settings = {"api_keys": keys}
-        if merged.get("IPFINDER_OUI_DB"):
-            settings["oui_db_path"] = Path(merged["IPFINDER_OUI_DB"])
+        for env_name, attr in _PATH_SETTINGS.items():
+            if merged.get(env_name):
+                settings[attr] = Path(merged[env_name])
         settings.update({k: v for k, v in overrides.items() if v is not None})
         config = cls(**settings)
         if config.profile not in PROFILES:

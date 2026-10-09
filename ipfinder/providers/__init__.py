@@ -1,8 +1,9 @@
 """Provider registry.
 
-``ACTIVE_PROVIDERS`` are implemented and run on every lookup.
-``PLANNED_PROVIDERS`` describe the roadmap (ADVANCED_PLAN.md section 3) so the
-``sources`` command can show what is coming and which API key each one needs.
+``default_providers()`` are implemented; which of them run depends on the
+profile (quick / standard / full), API keys and downloaded databases.
+``PLANNED_PROVIDERS`` describe the rest of the roadmap (ADVANCED_PLAN.md section 3)
+so the ``sources`` command can show what is coming and which key each needs.
 """
 
 from __future__ import annotations
@@ -10,7 +11,12 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 from ipfinder.providers.base import Provider
+from ipfinder.providers.cymru import TeamCymruProvider
+from ipfinder.providers.ipapi import IpApiProvider
+from ipfinder.providers.ipinfo_lite import IpinfoLiteProvider
+from ipfinder.providers.maxmind import MaxMindProvider
 from ipfinder.providers.offline import OfflineProvider
+from ipfinder.providers.peeringdb import PeeringDBProvider
 
 
 @dataclass(frozen=True)
@@ -23,15 +29,17 @@ class PlannedProvider:
 
 
 def default_providers() -> list[Provider]:
-    return [OfflineProvider()]
+    return [
+        OfflineProvider(),
+        IpApiProvider(),
+        IpinfoLiteProvider(),
+        MaxMindProvider(),
+        TeamCymruProvider(),
+        PeeringDBProvider(),
+    ]
 
 
 PLANNED_PROVIDERS = (
-    PlannedProvider("ip-api", "L2/L3/L7", 2, None, "Geolocation, ISP, ASN, proxy/hosting/mobile"),
-    PlannedProvider("ipinfo-lite", "L2/L3", 2, "IPINFO_TOKEN", "Country + ASN (unlimited)"),
-    PlannedProvider("maxmind", "L2", 2, "MAXMIND_LICENSE_KEY", "Offline GeoLite2 City database"),
-    PlannedProvider("team-cymru", "L3", 2, None, "ASN cross-check over DNS"),
-    PlannedProvider("peeringdb", "L3", 2, None, "Network type (ISP, content, education...)"),
     PlannedProvider("rdap", "L4", 3, None, "Registration, net range, abuse contact"),
     PlannedProvider("ripestat", "L5", 3, None, "BGP prefix, RPKI, neighbours"),
     PlannedProvider("dns", "L6", 3, None, "PTR and forward-confirmed reverse DNS"),

@@ -3,14 +3,18 @@
     ipfinder lookup 8.8.8.8 2001:4860:4860::8888
     ipfinder lookup 8.8.8.8 -f json -o report.json
     cat ips.txt | ipfinder lookup -f json
+    ipfinder lookup 8.8.8.8 --profile quick --no-cache
+    ipfinder me            (your own public IP)
     ipfinder sources
+    ipfinder cache info | ipfinder cache clear
     ipfinder 8.8.8.8       (shorthand for "lookup")
     ipfinder               (interactive prompt, like v1.0)
 
 Reports go to stdout; prompts, status lines and errors go to stderr, so
 "ipfinder -f json > out.json" always produces valid JSON.
 
-Exit codes: 0 success, 1 at least one input was not a valid IP,
+Exit codes: 0 success, 1 at least one input was not a valid IP (or "me" could
+not find your public IP),
 2 usage error (bad option, unreadable input file, unwritable output file),
 3 internal error, 130 interrupted (Ctrl+C).
 """
@@ -24,6 +28,7 @@ import contextlib
 import io
 import os
 import sys
+from dataclasses import replace
 from pathlib import Path
 
 from rich.console import Console
@@ -31,14 +36,19 @@ from rich.table import Table
 from rich.text import Text
 
 from ipfinder import __version__
-from ipfinder.core.config import Config
+from ipfinder.core.cache import Cache
+from ipfinder.core.config import PROFILES, Config
 from ipfinder.core.orchestrator import analyze_many
+from ipfinder.core.session import Session
 from ipfinder.core.text import display_safe
 from ipfinder.output import json_out, terminal
 from ipfinder.providers import PLANNED_PROVIDERS, default_providers
+from ipfinder.providers.base import ProviderError
+from ipfinder.providers.ipapi import public_ip
 
 EXIT_OK, EXIT_INVALID_INPUT, EXIT_USAGE, EXIT_INTERNAL = 0, 1, 2, 3
 EXIT_INTERRUPTED = 130
+COMMANDS = ("lookup", "me", "sources", "cache")
 
 
 def _build_parser() -> argparse.ArgumentParser:
@@ -49,19 +59,34 @@ def _build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--version", action="version", version=f"%(prog)s {__version__}")
     sub = parser.add_subparsers(dest="command")
 
-    lookup = sub.add_parser("lookup", help="analyse one or more IP addresses")
+    output = argparse.ArgumentParser(add_help=False)
+    output.add_argument("-f", "--format", choices=("text", "json"), default="text")
+    output.add_argument("-o", "--output", type=Path, help="write the result to this file")
+    output.add_argument(
+        "-v", "--verbose", action="store_true", help="also show Python flags and all ranges"
+    )
+    output.add_argument("--no-color", action="store_true", help="disable colours")
+    output.add_argument(
+        "-p",
+        "--profile",
+        choices=PROFILES,
+        default=None,
+        help="quick = offline + ip-api; standard (default) and full = every available source",
+    )
+    output.add_argument(
+        "--no-cache", action="store_true", help="do not read or write data/cache.sqlite"
+    )
+
+    lookup = sub.add_parser("lookup", parents=[output], help="analyse one or more IP addresses")
     lookup.add_argument("ips", nargs="*", metavar="IP", help="IPv4/IPv6 address(es)")
     lookup.add_argument(
         "-i", "--input-file", type=Path, help="read addresses from a file (one per line)"
     )
-    lookup.add_argument("-f", "--format", choices=("text", "json"), default="text")
-    lookup.add_argument("-o", "--output", type=Path, help="write the result to this file")
-    lookup.add_argument(
-        "-v", "--verbose", action="store_true", help="also show Python flags and all ranges"
-    )
-    lookup.add_argument("--no-color", action="store_true", help="disable colours")
 
-    sub.add_parser("sources", help="show data sources, their phase and API-key status")
+    sub.add_parser("me", parents=[output], help="analyse your own public IP address")
+    sub.add_parser("sources", help="show data sources, their status and API-key needs")
+    cache = sub.add_parser("cache", help="show or clear the local lookup cache")
+    cache.add_argument("action", choices=("info", "clear"))
     return parser
 
 
@@ -128,6 +153,23 @@ def _stdout_is_utf8() -> bool:
     return encoding in ("utf8", "utf8sig")
 
 
+def _config(args) -> Config:
+    return Config.load(profile=args.profile, use_cache=not args.no_cache)
+
+
+async def _lookup_all(inputs: list[str], config: Config):
+    async with Session(config) as session:
+        reports, errors = await analyze_many(inputs, session)
+        return reports, errors, session.cache.warning
+
+
+async def _lookup_me(config: Config):
+    async with Session(config) as session:
+        address = await public_ip(session)
+        reports, errors = await analyze_many([address], session)
+        return reports, errors, session.cache.warning
+
+
 def _cmd_lookup(args, console: Console, messages: Console) -> int:
     try:
         inputs = _collect_inputs(args)
@@ -139,9 +181,45 @@ def _cmd_lookup(args, console: Console, messages: Console) -> int:
         messages.print(Text("[!] No IP address given.", style="red"))
         return EXIT_USAGE
 
-    config = Config.load()
-    reports, errors = asyncio.run(analyze_many(inputs, config))
+    reports, errors, warning = asyncio.run(_lookup_all(inputs, _config(args)))
+    if warning:
+        messages.print(Text(f"[!] {warning}", style="yellow"))
+    return _emit(args, reports, errors, console, messages)
 
+
+def _cmd_me(args, console: Console, messages: Console) -> int:
+    try:
+        reports, errors, warning = asyncio.run(_lookup_me(_config(args)))
+    except ProviderError as exc:
+        messages.print(Text(f"[!] Could not find your public IP: {exc}", style="red"))
+        return EXIT_INVALID_INPUT
+    if warning:
+        messages.print(Text(f"[!] {warning}", style="yellow"))
+    return _emit(args, reports, errors, console, messages)
+
+
+def _cmd_cache(args, console: Console) -> int:
+    config = Config.load()
+    cache = Cache(config.cache_path)
+    try:
+        if args.action == "clear":
+            removed = cache.clear()
+            console.print(Text(f"Removed {removed} cached entries from {config.cache_path}"))
+        else:
+            info = cache.stats()
+            console.print(Text(f"Cache file: {info['path']} (persistent: {info['persistent']})"))
+            for name, counts in sorted((info.get("providers") or {}).items()):
+                console.print(
+                    Text(f"  {name}: {counts['fresh']} fresh / {counts['entries']} total")
+                )
+    finally:
+        cache.close()
+    if cache.warning:
+        console.print(Text(f"[!] {cache.warning}", style="yellow"))
+    return EXIT_OK
+
+
+def _emit(args, reports, errors, console: Console, messages: Console) -> int:
     if args.format == "json":
         # Non-ASCII stays readable in UTF-8 files; other stdout encodings get \uXXXX.
         ascii_only = not args.output and not _stdout_is_utf8()
@@ -172,18 +250,22 @@ def _cmd_lookup(args, console: Console, messages: Console) -> int:
 def _cmd_sources(console: Console) -> int:
     config = Config.load()
     table = Table(title="IP Finder data sources")
-    for col in ("Source", "Layer", "Phase", "Status", "API key"):
+    for col in ("Source", "Layer", "Profiles", "Status", "Needs"):
         table.add_column(col)
+    full = replace(config, profile="full")
     for p in default_providers():
-        table.add_row(p.name, p.layer, "1", Text("active", style="green"), "not needed")
+        reason = p.unavailable_reason(full)
+        status = Text("ready", style="green") if reason is None else Text(reason, style="yellow")
+        needs = p.requires_key or ("GeoLite2 .mmdb files" if p.required_files(config) else "-")
+        table.add_row(p.name, p.layer, ", ".join(p.profiles), status, needs)
     for p in PLANNED_PROVIDERS:
         if p.key is None:
-            key = "not needed"
+            needs = "-"
         elif config.key_for(p.key):
-            key = Text(f"{p.key} set", style="green")
+            needs = Text(f"{p.key} set", style="green")
         else:
-            key = Text(f"{p.key} missing", style="yellow")
-        table.add_row(p.name, p.layer, str(p.phase), Text("planned", style="dim"), key)
+            needs = Text(f"{p.key} missing", style="yellow")
+        table.add_row(p.name, p.layer, "-", Text(f"planned (Phase {p.phase})", style="dim"), needs)
     console.print(table)
     return EXIT_OK
 
@@ -206,7 +288,7 @@ def _harden_streams() -> None:
 def main(argv: list[str] | None = None) -> int:
     argv = list(sys.argv[1:] if argv is None else argv)
     # "ipfinder 8.8.8.8" and plain "ipfinder" are shorthand for "ipfinder lookup ..."
-    if not argv or argv[0] not in ("lookup", "sources", "-h", "--help", "--version"):
+    if not argv or argv[0] not in COMMANDS + ("-h", "--help", "--version"):
         argv = ["lookup", *argv]
     args = _build_parser().parse_args(argv)
     _harden_streams()
@@ -217,6 +299,10 @@ def main(argv: list[str] | None = None) -> int:
     try:
         if args.command == "sources":
             return _cmd_sources(console)
+        if args.command == "cache":
+            return _cmd_cache(args, console)
+        if args.command == "me":
+            return _cmd_me(args, console, messages)
         return _cmd_lookup(args, console, messages)
     except KeyboardInterrupt:
         return EXIT_INTERRUPTED

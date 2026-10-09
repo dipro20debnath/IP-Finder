@@ -12,6 +12,8 @@ class OfflineProvider(Provider):
     layer = "L1"
     description = "Address type, RFC, representations, IPv6 insights (no network)"
     needs_public_ip = False
+    stage = 0
+    profiles = ("quick", "standard", "full")
 
     async def lookup(self, ctx: LookupContext) -> dict[str, Any]:
         oui_lookup = make_lookup(ctx.config.oui_db_path)

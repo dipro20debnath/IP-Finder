@@ -1,10 +1,13 @@
 import io
 import json
+import shutil
+from pathlib import Path
 
 import pytest
 
 from ipfinder import __version__
 from ipfinder.cli import main
+from tests.conftest import ASN_DB, CITY_DB
 
 
 class FakeStdin(io.StringIO):
@@ -122,11 +125,15 @@ def test_verbose_shows_python_flags(capsys, no_stdin):
 
 def test_sources(capsys, monkeypatch):
     monkeypatch.setenv("IPINFO_TOKEN", "x")
+    monkeypatch.setenv("COLUMNS", "200")
     assert main(["sources"]) == 0
     out = capsys.readouterr().out
-    assert "offline" in out and "ip-api" in out
-    assert "IPINFO_TOKEN set" in out
-    assert "ABUSEIPDB_API_KEY missing" in out
+    lines = {line.split("│")[1].strip(): line for line in out.splitlines() if line.count("│") > 3}
+    assert "ready" in lines["ip-api"]
+    assert "ready" in lines["ipinfo-lite"]  # token set
+    assert "database not found" in lines["maxmind"]
+    assert "planned (Phase 5)" in lines["abuseipdb"]
+    assert "ABUSEIPDB_API_KEY missing" in lines["abuseipdb"]
 
 
 def test_version(capsys):
@@ -241,3 +248,91 @@ def test_closed_stdin(monkeypatch, capsys):
     monkeypatch.setattr("sys.stdin", None)
     assert main([]) == 2
     assert "No IP address given" in capsys.readouterr().err
+
+
+IP_API_OK = {
+    "status": "success",
+    "country": "Bangladesh",
+    "countryCode": "BD",
+    "regionName": "Dhaka Division",
+    "city": "Dhaka",
+    "lat": 23.7104,
+    "lon": 90.4074,
+    "timezone": "Asia/Dhaka",
+    "isp": "Example ISP",
+    "as": "AS64500 Example ISP",
+    "hosting": False,
+    "proxy": False,
+    "mobile": True,
+    "query": "203.0.113.9",
+}
+
+
+def test_lookup_shows_location_network_and_sources(capsys, no_stdin, fake_api, monkeypatch):
+    fake_api.json("GET", "http://ip-api.com/json/", IP_API_OK)
+    monkeypatch.setenv("COLUMNS", "160")
+    assert main(["lookup", "--no-color", "8.8.8.8"]) == 0
+    out = capsys.readouterr().out
+    assert "Location (approximate)" in out
+    assert "Bangladesh (BD)" in out and "Dhaka, Dhaka Division" in out
+    assert "AS64500" in out
+    assert "Mobile (cellular)" in out
+    assert "https://www.google.com/maps?q=23.7104,90.4074" in out
+    assert "Asia/Dhaka, UTC+06:00" in out
+    assert "plain HTTP" in out
+
+
+def test_quick_profile_uses_only_ip_api(capsys, no_stdin, fake_api):
+    fake_api.json("GET", "http://ip-api.com/json/", IP_API_OK)
+    assert main(["lookup", "-f", "json", "--profile", "quick", "8.8.8.8"]) == 0
+    results = {
+        r["provider"]: r for r in json.loads(capsys.readouterr().out)["reports"][0]["results"]
+    }
+    assert results["ip-api"]["ok"] is True
+    assert results["team-cymru"]["skipped"] == "not part of the 'quick' profile"
+
+
+def test_cache_file_and_no_cache(capsys, no_stdin, fake_api, tmp_path):
+    fake_api.json("GET", "http://ip-api.com/json/", IP_API_OK)
+    assert main(["lookup", "-f", "json", "--no-cache", "8.8.8.8"]) == 0
+    assert not (tmp_path / "data" / "cache.sqlite").exists()
+
+    assert main(["lookup", "-f", "json", "8.8.8.8"]) == 0
+    assert (tmp_path / "data" / "cache.sqlite").exists()
+    calls = len(fake_api.requests)
+    capsys.readouterr()
+    assert main(["lookup", "-f", "json", "8.8.8.8"]) == 0
+    doc = json.loads(capsys.readouterr().out)
+    ip_api = next(r for r in doc["reports"][0]["results"] if r["provider"] == "ip-api")
+    assert ip_api["cached"] is True
+    assert len([r for r in fake_api.requests[calls:] if "ip-api" in str(r.url)]) == 0
+
+    assert main(["cache", "info"]) == 0
+    assert "ip-api: 1 fresh / 1 total" in capsys.readouterr().out
+    assert main(["cache", "clear"]) == 0
+    assert "Removed 1 cached entries" in capsys.readouterr().out
+
+
+def test_me_command(capsys, fake_api):
+    fake_api.json("GET", "http://ip-api.com/json/", IP_API_OK)
+    assert main(["me", "-f", "json", "--no-cache"]) == 0
+    doc = json.loads(capsys.readouterr().out)
+    assert doc["reports"][0]["ip"] == "203.0.113.9"
+
+
+def test_me_without_network(capsys):
+    assert main(["me"]) == 1
+    assert "Could not find your public IP: cannot reach ip-api.com" in capsys.readouterr().err
+
+
+def test_maxmind_files_from_environment(capsys, no_stdin, monkeypatch, tmp_path):
+    data = tmp_path / "data"
+    data.mkdir()
+    shutil.copy(CITY_DB, data / "GeoLite2-City.mmdb")
+    monkeypatch.setenv("IPFINDER_MAXMIND_ASN_DB", str(ASN_DB))
+    assert main(["lookup", "-f", "json", "--no-cache", "81.2.69.142"]) == 0
+    report = json.loads(capsys.readouterr().out)["reports"][0]
+    maxmind = next(r for r in report["results"] if r["provider"] == "maxmind")
+    assert maxmind["data"]["location"]["city"] == "London"
+    assert report["summary"]["map_source"] == "maxmind"
+    assert Path(data / "GeoLite2-City.mmdb").exists()
