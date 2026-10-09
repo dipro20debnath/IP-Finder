@@ -6,7 +6,7 @@ Python patch releases (for example ``3fff::/20``, the IPv6 documentation prefix
 from RFC 9637, is unknown to CPython 3.12.3 but known to 3.11.17 and 3.13).
 With a fixed table every Python version gives the same answer.
 
-Sources:
+Sources (rows checked against the registry versions last updated 2025-10-09):
   * IANA IPv4 Special-Purpose Address Registry
     https://www.iana.org/assignments/iana-ipv4-special-registry/
   * IANA IPv6 Special-Purpose Address Registry
@@ -24,6 +24,8 @@ import ipaddress
 from dataclasses import dataclass
 from functools import lru_cache
 
+from ipfinder.core.text import network_text
+
 IPAddress = ipaddress.IPv4Address | ipaddress.IPv6Address
 IPNetwork = ipaddress.IPv4Network | ipaddress.IPv6Network
 
@@ -39,7 +41,7 @@ class SpecialRange:
 
     def to_dict(self) -> dict:
         return {
-            "range": str(self.network),
+            "range": network_text(self.network),
             "name": self.name,
             "category": self.category,
             "rfc": self.rfc,
@@ -70,6 +72,7 @@ _IPV4_TABLE = [
     ("192.31.196.0/24", "AS112-v4", "as112", "RFC 7535", True),
     ("192.52.193.0/24", "AMT", "amt", "RFC 7450", True),
     ("192.88.99.0/24", "Deprecated (6to4 Relay Anycast)", "deprecated", "RFC 7526", None),
+    ("192.88.99.2/32", "6a44-relay anycast address", "anycast", "RFC 6751", False),
     ("192.168.0.0/16", "Private-Use", "private", "RFC 1918", False),
     ("192.175.48.0/24", "Direct Delegation AS112 Service", "as112", "RFC 7534", True),
     ("198.18.0.0/15", "Benchmarking", "benchmarking", "RFC 2544", False),
@@ -94,6 +97,7 @@ _IPV6_TABLE = [
     ),
     ("64:ff9b:1::/48", "IPv4-IPv6 Translation (local-use)", "translation", "RFC 8215", False),
     ("100::/64", "Discard-Only Address Block", "discard", "RFC 6666", False),
+    ("100:0:0:1::/64", "Dummy IPv6 Prefix", "dummy", "RFC 9780", False),
     ("2001::/23", "IETF Protocol Assignments", "protocol_assignment", "RFC 2928", False),
     ("2001::/32", "Teredo", "tunnel", "RFC 4380", None),
     ("2001:1::1/128", "Port Control Protocol Anycast", "anycast", "RFC 7723", True),

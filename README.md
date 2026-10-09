@@ -12,14 +12,14 @@
 
 | বিষয় | উদাহরণ |
 |---|---|
-| Validation ও পরিষ্কার error | `010.1.1.1` → leading zero ambiguous (CVE-2021-29921); `8.8.8.0/24` → CIDR, single IP নয়; `google.com` → hostname |
+| Validation ও পরিষ্কার error | `010.1.1.1` → leading zero ambiguous, inet_aton পড়ে `8.1.1.1` (CVE-2021-29921); `0x7f000001` → hex রূপ, আসলে `127.0.0.1`; `8.8.8.0/24` → CIDR, single IP নয়; `google.com` → hostname |
 | Flexible input | `8.8.8.8:53`, `[2001:db8::1]:443`, `https://8.8.8.8/x`, `fe80::1%eth0`, integer `134744072`, **বাংলা সংখ্যা `৮.৮.৮.৮`** |
 | IANA special-purpose classification | `100.64.1.1` → Shared Address Space (CGNAT), RFC 6598; `3fff::1` → Documentation, RFC 9637 |
 | Online lookup চলবে কি না, কোন IP-তে | Private/CGNAT → না; `2002:808:808::1` (6to4) → embedded `8.8.8.8` |
 | Representations | Integer, hex, binary, reverse-DNS name, IPv4-mapped IPv6, 6to4 prefix |
-| IPv4 details | Historic class (A/B/C/D/E), multicast block, **GLOP থেকে AS number** (RFC 3180) |
-| IPv6 embedded IPv4 | IPv4-mapped, NAT64 (RFC 6052), 6to4, **Teredo client IP + port + cone flag** |
-| IPv6 interface ID | **EUI-64 → MAC address → vendor**, ISATAP, subnet-router anycast, RFC 2526 anycast, manual, random/privacy |
+| IPv4 details | Historic class (A/B/C/D/E), multicast block, **GLOP থেকে AS number** (RFC 3180); 6to4 prefix শুধু public IPv4-এর জন্য (RFC 3056) |
+| IPv6 embedded IPv4 | IPv4-mapped, NAT64 (RFC 6052), 6to4, **Teredo client IP + port + flags** (RFC 4380/5991) |
+| IPv6 interface ID | **EUI-64 → MAC address → vendor** (group-bit যাচাই সহ), IANA-reserved ID (RFC 5453, Proxy Mobile IPv6), ISATAP, subnet-router ও RFC 2526 anycast, manual, random/privacy |
 | IPv6 structure | /32, /48, /56, /64 prefix ও interface ID |
 | IPv6 multicast | Scope (link/site/global…), flags, well-known group, solicited-node |
 
@@ -31,12 +31,16 @@ Python-এর `ipaddress.is_global` সব জায়গায় IANA registr
 |---|---|---|
 | `5f00::1` | SRv6 SID (RFC 9602), globally reachable **নয়** | `True` (সব version) |
 | `2001:1::3` | DNS-SD SRP anycast (RFC 9665), globally reachable | `False` (সব version) |
-| `fec0::1` | Site-local, deprecated (RFC 3879) | `True` (সব version) |
+| `fec0::1` | Site-local, RFC 3879-এ বাতিল; IANA address-space registry-তে reserved | `True` (সব version) |
 | `4000::1` | `2000::/3`-এর বাইরে, unallocated | `True` (সব version) |
 | `::808:808` | IPv4-compatible, deprecated (RFC 4291) | `True` (সব version) |
+| `100:0:0:1::1` | Dummy IPv6 Prefix (RFC 9780, 2025), globally reachable **নয়** | `True` (সব version) |
+| `192.88.99.2` | 6a44-relay anycast (RFC 6751), globally reachable **নয়** | `True` (সব version) |
 | `3fff::1` | Documentation (RFC 9637) | 3.12.3-এ `True`; বাকিগুলোতে `False` |
 
-তাই IP Finder IANA registry থেকে নিজস্ব table (`ipfinder/core/special_ranges.py`) ব্যবহার করে। Python যেখানে ভিন্ন কথা বলে, `-v` দিলে report-এ সেটা দেখায়।
+তাই IP Finder IANA registry থেকে নিজস্ব table (`ipfinder/core/special_ranges.py`, 2025-10-09-এর registry অনুযায়ী) ব্যবহার করে। Python যেখানে ভিন্ন কথা বলে, report-এ সেটা জানায় (`-v` দিলে Python-এর সব flag দেখায়)।
+
+একই কারণে IPv4-mapped address-এর লেখাও (`::ffff:8.8.8.8`) tool নিজে বানায়। CPython 3.12.3 এটা `::ffff:808:808` লেখে, আর 3.10.20/3.11.17/3.13+ লেখে `::ffff:8.8.8.8`।
 
 ---
 
@@ -73,10 +77,14 @@ ipfinder lookup -i ips.txt -f json        # file থেকে (প্রতি �
 cat ips.txt | ipfinder lookup -f json     # stdin থেকে
 ipfinder sources                          # কোন data source কোন phase-এ, key আছে কি না
 ipfinder                                  # v1.0-এর মতো interactive prompt
-python -m ipfinder 8.8.8.8                # install ছাড়াও চলে
+python -m ipfinder 8.8.8.8                # repo folder থেকে, rich install থাকলে
 ```
 
-**Exit codes:** `0` সফল, `1` অন্তত একটি input বৈধ IP নয়, `2` command-line ভুল, `3` internal error, `130` Ctrl+C।
+**Exit codes:** `0` সফল, `1` অন্তত একটি input বৈধ IP নয়, `2` usage ভুল (ভুল option, input file পড়া যায়নি, output file লেখা যায়নি), `3` internal error, `130` Ctrl+C।
+
+Report যায় **stdout**-এ। Prompt, status ও error বার্তা যায় **stderr**-এ, তাই `ipfinder -f json > out.json` সবসময় বৈধ JSON দেয়। Input file UTF-8 (BOM সহ বা ছাড়া) বা UTF-16 হতে পারে, যেমন Windows PowerShell-এর তৈরি file।
+
+**কোন folder থেকে চালাবেন:** `.env` আর `data/oui.csv` **যে folder থেকে command চালাচ্ছেন সেখান থেকে** পড়া হয় (সাধারণত repo-র root)। অন্য জায়গা থেকে চালালে OUI file-এর path `IPFINDER_OUI_DB` environment variable দিয়ে দিন।
 
 ### আসল output (সংক্ষেপিত): Teredo address থেকে লুকানো client IP ও port
 
@@ -88,13 +96,16 @@ $ ipfinder 2001:0:4136:e378:8000:63bf:f7f7:f7f7
 │   Type                   Teredo  [2001::/32, RFC 4380]                       │
 │   Globally reachable     n/a (see RFC)                                       │
 │   Online lookup target   8.8.8.8  (Using the IPv4 address embedded in this   │
-│                          Teredo address (teredo_client, RFC 4380))           │
+│                          Teredo address (teredo_client, RFC 4380, RFC        │
+│                          5991))                                              │
 │ ...                                                                          │
 │ Embedded IPv4 (teredo_client)                                                │
-│   IPv4                 8.8.8.8                                               │
-│   Role                 client's public (NAT) IPv4                            │
-│   Client port          40000                                                 │
-│   Cone NAT flag        True                                                  │
+│   IPv4                    8.8.8.8                                            │
+│   Role                    client's public (NAT) IPv4                         │
+│   Client port             40000                                              │
+│   Flags                   0x8000                                             │
+│   Cone bit (deprecated)   True                                               │
+│   RFC 5991 random bits    False                                              │
 │ Embedded IPv4 (teredo_server)                                                │
 │   IPv4                 65.54.227.120                                         │
 │   Role                 Teredo server                                         │
@@ -127,6 +138,7 @@ IP-Finder/
 │   ├── cli.py                  # argparse CLI (lookup, sources)
 │   ├── core/
 │   │   ├── validator.py        # input → validated address, helpful errors
+│   │   ├── text.py             # version-independent IPv6 text, safe display of input
 │   │   ├── special_ranges.py   # IANA special-purpose tables + longest-prefix classify
 │   │   ├── models.py           # ProviderResult, IPReport
 │   │   ├── config.py           # .env + environment, API keys
@@ -171,7 +183,7 @@ Phase 2+-এর provider বানানোর আগে প্রতিটি A
 cp .env.example .env              # যে key আছে শুধু সেগুলো বসান (কোনোটাই বাধ্যতামূলক নয়)
 python scripts/capture_fixtures.py --list
 python scripts/capture_fixtures.py                  # 8.8.8.8, 1.1.1.1, 2001:4860:4860::8888
-python scripts/capture_fixtures.py --only ip-api rdap 8.8.8.8
+python scripts/capture_fixtures.py 8.8.8.8 --only ip-api rdap   # IP আগে, তারপর --only
 ```
 
 - Key ছাড়া চলে: ip-api, RDAP, RIPEstat, Shodan InternetDB, GreyNoise Community (key ঐচ্ছিক)।
@@ -187,7 +199,7 @@ python scripts/capture_fixtures.py --only ip-api rdap 8.8.8.8
 
 | Phase | বিষয় | অবস্থা |
 |---|---|---|
-| 0 | Setup, `.env`, CI, fixture capture script | ✅ |
+| 0 | Setup, `.env`, CI, fixture capture script | 🟡 script প্রস্তুত; আসল API fixture এখনও রেকর্ড করা বাকি (নিচে দেখুন) |
 | 1 | Validator, L1 offline analysis, models, CLI | ✅ |
 | 2 | ip-api, IPinfo Lite, MaxMind, Team Cymru, PeeringDB; cache, rate limiter | ⏳ |
 | 3 | RDAP, RIPEstat (BGP/RPKI), DNS/FCrDNS, Geofeed | ⏳ |

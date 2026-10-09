@@ -7,6 +7,13 @@ Accepted forms:
   * inside a URL:               https://8.8.8.8/path
   * 32/128-bit integer form:    134744072  (= 8.8.8.8)
   * Bengali or other non-ASCII digits: ৮.৮.৮.৮  (normalised to 8.8.8.8)
+
+Rejected with an explanation: CIDR networks, hostnames, and the ambiguous
+inet_aton-style IPv4 forms (leading zeros, hex, shorthand) that different
+software reads as different addresses (CVE-2021-29921).
+
+Every message that repeats the input passes it through ``display_safe`` so
+control characters (e.g. terminal escape sequences) are shown, not executed.
 """
 
 from __future__ import annotations
@@ -18,12 +25,18 @@ from dataclasses import dataclass, field
 from urllib.parse import urlsplit
 
 from ipfinder.core.special_ranges import IPAddress
+from ipfinder.core.text import display_safe
 
-_DOTTED_QUAD = re.compile(r"\d+(?:\.\d+)*", re.ASCII)
+MAX_INPUT_LENGTH = 2048  # generous for a URL; anything longer is not an address
+
+_DOTTED_DECIMAL = re.compile(r"\d+(?:\.\d+)*", re.ASCII)
 _IPV4_WITH_PORT = re.compile(r"(\d+\.\d+\.\d+\.\d+):(\d+)", re.ASCII)
 _BRACKETED = re.compile(r"\[([^\]]+)\](?::(\d+))?", re.ASCII)
 _HOSTNAME_CHARS = re.compile(r"[A-Za-z0-9.-]+", re.ASCII)
+_INET_ATON_PART = re.compile(r"0[xX][0-9a-fA-F]*|0[0-7]*|[1-9][0-9]*", re.ASCII)
 _HEX_DIGITS = frozenset("0123456789abcdefABCDEF")
+# WHATWG URL Standard "special" schemes: '\' is treated like '/' in these.
+_SPECIAL_SCHEMES = frozenset({"http", "https", "ftp", "ws", "wss", "file"})
 
 
 class InvalidIPError(ValueError):
@@ -59,9 +72,13 @@ def _normalise_digits(text: str) -> str:
 
 
 def _parse_port(text: str) -> int:
-    port = int(text)
+    # Bound the length first: int() of a huge digit string is slow and, past
+    # 4300 digits, raises a plain ValueError on Python 3.10.7+.
+    port = int(text) if len(text.lstrip("0")) <= 5 else 65536
     if not 0 <= port <= 65535:
-        raise InvalidIPError(f"Port {port} is out of range", "a port must be 0-65535")
+        raise InvalidIPError(
+            f"Port '{display_safe(text[:20])}' is out of range", "a port must be 0-65535"
+        )
     return port
 
 
@@ -73,70 +90,127 @@ def _is_network(text: str) -> bool:
     return True
 
 
+def inet_aton(text: str) -> ipaddress.IPv4Address | None:
+    """How BSD/glibc ``inet_aton`` (and browsers' URL parser) read ``text``:
+    1-4 dot-separated parts, each decimal, 0-prefixed octal or 0x-prefixed hex,
+    the last part filling the remaining bytes. Returns None if it is not that form."""
+    parts = text.split(".")
+    if not 1 <= len(parts) <= 4:
+        return None
+    values = []
+    for part in parts:
+        if not part or len(part) > 12 or not _INET_ATON_PART.fullmatch(part):
+            return None
+        if part[:2] in ("0x", "0X"):
+            values.append(int(part[2:] or "0", 16))
+        elif len(part) > 1 and part[0] == "0":
+            values.append(int(part, 8))
+        else:
+            values.append(int(part))
+    *head, last = values
+    if any(v > 255 for v in head) or last >= 1 << (8 * (4 - len(head))):
+        return None
+    value = 0
+    for v in head:
+        value = (value << 8) | v
+    return ipaddress.IPv4Address((value << (8 * (4 - len(head)))) | last)
+
+
 def _diagnose(text: str) -> InvalidIPError:
     """Explain *why* ``text`` is not an IP address."""
+    shown = display_safe(text)
     if "/" in text and _is_network(text):
         return InvalidIPError(
-            f"'{text}' is a network (CIDR), not a single address",
+            f"'{shown}' is a network (CIDR), not a single address",
             "give one address, e.g. the first host of the range",
         )
-    if _DOTTED_QUAD.fullmatch(text):
+    aton = inet_aton(text)
+    if _DOTTED_DECIMAL.fullmatch(text):
         parts = text.split(".")
         if len(parts) != 4:
+            hint = "example: 8.8.8.8"
+            if aton:
+                hint = f"inet_aton-style software would silently read it as {aton}; {hint}"
             return InvalidIPError(
-                f"'{text}' has {len(parts)} part(s); an IPv4 address needs exactly 4",
-                "example: 8.8.8.8",
+                f"'{shown}' has {len(parts)} part(s); an IPv4 address needs exactly 4", hint
             )
         for part in parts:
-            if int(part) > 255:
+            value = int(part) if len(part) <= 12 else None  # bounded int() conversion
+            if value is None or value > 255:
                 return InvalidIPError(
-                    f"Octet {part} in '{text}' is out of range", "each IPv4 part must be 0-255"
+                    f"Octet {display_safe(part[:20])} in '{shown}' is out of range",
+                    "each IPv4 part must be 0-255",
                 )
         for part in parts:
             if len(part) > 1 and part.startswith("0"):
+                reading = f"e.g. inet_aton reads it as {aton}" if aton else "or rejects it"
                 return InvalidIPError(
-                    f"Leading zero in octet '{part}' of '{text}' is ambiguous",
-                    "some software reads it as octal (CVE-2021-29921); remove leading zeros",
+                    f"Leading zero in octet '{part}' of '{shown}' is ambiguous",
+                    f"some software reads it as octal ({reading}; CVE-2021-29921); "
+                    "remove leading zeros",
                 )
+    if aton:
+        return InvalidIPError(
+            f"'{shown}' is a non-standard (hex/octal/shorthand) IPv4 form",
+            f"inet_aton-style software reads it as {aton}; write it as dotted decimal",
+        )
     if (
         _HOSTNAME_CHARS.fullmatch(text)
         and any(c.isalpha() for c in text)
         and not set(text.replace(":", "")) <= _HEX_DIGITS
     ):
         return InvalidIPError(
-            f"'{text}' looks like a hostname, not an IP address",
+            f"'{shown}' looks like a hostname, not an IP address",
             "DNS resolution arrives in Phase 3; for now look up the IP, e.g. with 'nslookup'",
         )
-    return InvalidIPError(f"'{text}' is not a valid IPv4 or IPv6 address")
+    return InvalidIPError(f"'{shown}' is not a valid IPv4 or IPv6 address")
+
+
+def _from_url(text: str, notes: list[str]) -> tuple[str, int | None]:
+    scheme = text.split("://", 1)[0].lower()
+    if "\\" in text and scheme in _SPECIAL_SCHEMES:
+        # Browsers end the host at '\' for http(s) etc.; urlsplit would not, and
+        # "http://1.1.1.1\@8.8.8.8/" would then wrongly resolve to 8.8.8.8.
+        text = text.replace("\\", "/")
+        notes.append("Treated '\\' as '/' in the URL, as browsers do (WHATWG URL Standard)")
+    try:
+        parts = urlsplit(text)
+        host, port = parts.hostname, parts.port
+    except ValueError as exc:
+        raise InvalidIPError(f"Could not parse URL '{display_safe(text)}'", str(exc)) from exc
+    if not host:
+        raise InvalidIPError(f"No host found in URL '{display_safe(text)}'")
+    if "@" in parts.netloc:
+        notes.append("URL contains user-info before '@'; only the part after '@' is the host")
+    notes.append(f"Extracted host from URL: {display_safe(host)}")
+    return host, port
 
 
 def parse_ip(raw: str) -> ParsedInput:
     """Validate ``raw`` and return a :class:`ParsedInput`, or raise :class:`InvalidIPError`."""
     if raw is None:
         raise InvalidIPError("No input given")
+    if len(raw) > MAX_INPUT_LENGTH:
+        raise InvalidIPError(
+            f"Input is too long ({len(raw)} characters)",
+            f"an IP address or URL fits in {MAX_INPUT_LENGTH} characters",
+        )
     notes: list[str] = []
-    text = raw.strip()
+    text = raw.strip().lstrip("﻿").strip()  # also drop a UTF-8 byte-order mark
     if not text:
         raise InvalidIPError("Empty input", "type an IP address such as 8.8.8.8")
 
     normalised = _normalise_digits(text)
     if normalised != text:
-        notes.append(f"Normalised non-ASCII characters: '{text}' -> '{normalised}'")
+        notes.append(
+            f"Normalised non-ASCII characters: '{display_safe(text)}' -> "
+            f"'{display_safe(normalised)}'"
+        )
         text = normalised
 
     port: int | None = None
-
     if "://" in text:
-        try:
-            parts = urlsplit(text)
-            host = parts.hostname
-            url_port = parts.port
-        except ValueError as exc:
-            raise InvalidIPError(f"Could not parse URL '{text}'", str(exc)) from exc
-        if not host:
-            raise InvalidIPError(f"No host found in URL '{text}'")
-        notes.append(f"Extracted host from URL: {host}")
-        text, port = host, url_port
+        text, port = _from_url(text, notes)
 
     bracketed = _BRACKETED.fullmatch(text)
     if bracketed:
@@ -149,13 +223,15 @@ def parse_ip(raw: str) -> ParsedInput:
             text, port = with_port.group(1), _parse_port(with_port.group(2))
 
     if text.isascii() and text.isdigit():
+        if len(text.lstrip("0")) > 39:  # 2**128 - 1 has 39 digits
+            raise InvalidIPError("Integer is larger than any IPv6 address (2^128 - 1)")
         value = int(text)
         if value <= 2**32 - 1:
             address: IPAddress = ipaddress.IPv4Address(value)
         elif value <= 2**128 - 1:
             address = ipaddress.IPv6Address(value)
         else:
-            raise InvalidIPError(f"Integer {value} is larger than any IPv6 address (2^128 - 1)")
+            raise InvalidIPError("Integer is larger than any IPv6 address (2^128 - 1)")
         notes.append(f"Interpreted integer {value} as {address}")
         return ParsedInput(raw, address, "integer", port, None, tuple(notes))
 
@@ -167,6 +243,10 @@ def parse_ip(raw: str) -> ParsedInput:
     scope_id = None
     if parsed.version == 6 and parsed.scope_id:
         scope_id = parsed.scope_id
+        if any(not ch.isprintable() or ch.isspace() for ch in scope_id):
+            raise InvalidIPError(
+                f"Zone ID '{display_safe(scope_id)}' contains control or whitespace characters"
+            )
         parsed = ipaddress.IPv6Address(text.split("%", 1)[0])
         notes.append(f"Zone (scope) ID '%{scope_id}' is local to one machine and was set aside")
 

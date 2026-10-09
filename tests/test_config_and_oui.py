@@ -89,8 +89,31 @@ def test_offline_provider_uses_oui_database(tmp_path, config):
     cfg = Config.load(env={}, dotenv_path=None, oui_db_path=path)
     ctx = LookupContext(parsed=parse_ip("2001:db8::21a:2bff:fe3c:4d5e"), config=cfg)
     data = run(OfflineProvider().lookup(ctx))
-    assert data["oui_database"] == "loaded"
+    assert data["oui_database"] == f"loaded from {path}"
     assert data["ipv6"]["interface_id"]["vendor"] == "Example Vendor, Inc."
 
     ctx = LookupContext(parsed=parse_ip("2001:db8::21a:2bff:fe3c:4d5e"), config=config)
-    assert run(OfflineProvider().lookup(ctx))["oui_database"] == "not found"
+    assert run(OfflineProvider().lookup(ctx))["oui_database"].startswith("no OUI list at")
+
+
+@pytest.mark.parametrize(
+    "line,key,value",
+    [
+        ('IPINFO_TOKEN="abc123" # my token', "IPINFO_TOKEN", "abc123"),
+        ("ABUSEIPDB_API_KEY='k1' # comment", "ABUSEIPDB_API_KEY", "k1"),
+        ("OTX_API_KEY=abc\t# tab comment", "OTX_API_KEY", "abc"),
+        ("export\tSPAMHAUS_DQS_KEY=tabexport", "SPAMHAUS_DQS_KEY", "tabexport"),
+        ("GREYNOISE_API_KEY=a#b", "GREYNOISE_API_KEY", "a#b"),
+        ('VIRUSTOTAL_API_KEY="has # inside" # and a comment', "VIRUSTOTAL_API_KEY", "has # inside"),
+    ],
+)
+def test_read_dotenv_quotes_and_comments(tmp_path, line, key, value):
+    env = tmp_path / ".env"
+    env.write_text(line + "\n", encoding="utf-8")
+    assert read_dotenv(env) == {key: value}
+
+
+def test_read_dotenv_with_bom(tmp_path):
+    env = tmp_path / ".env"
+    env.write_bytes("\ufeffIPINFO_TOKEN=x\n".encode())
+    assert read_dotenv(env) == {"IPINFO_TOKEN": "x"}

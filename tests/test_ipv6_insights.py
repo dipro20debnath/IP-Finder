@@ -21,8 +21,10 @@ def test_teredo_rfc_example():
     client = found["teredo_client"]
     assert client["address"] == "192.0.2.45"
     assert client["client_port"] == 40000
-    assert client["cone_nat"] is True
+    assert client["cone_bit"] is True
+    assert client["random_flag_bits"] is False
     assert client["flags"] == "0x8000"
+    assert "RFC 5991" in client["rfc"] and "deprecated" in client["flags_note"]
     assert client["category"] == "documentation"
     assert client["globally_reachable"] is False
 
@@ -104,6 +106,11 @@ def test_isatap(address, ipv4, global_flag):
         ("2606:4700:4700::1111", "low_byte"),
         ("2001:db8::c000:201", "possible_embedded_ipv4"),
         ("2001:db8::a1b2:c3d4:e5f6:789a", "opaque"),
+        ("2a03:2880:f12f:83:face:b00c:0:25de", "opaque"),
+        # 0.x.x.x is "this network", never a host: these are manual IDs, not IPv4
+        ("2001:db8::1:1", "manual"),
+        ("2001:db8::53:1", "manual"),
+        ("2001:db8::1:0:0:1", "manual"),
     ],
 )
 def test_interface_id_types(address, kind):
@@ -176,3 +183,38 @@ def test_multicast_none_for_unicast():
 )
 def test_structure_only_where_meaningful(address, has_structure):
     assert (insights(ip(address))["structure"] is not None) is has_structure
+
+
+def test_teredo_rfc5991_random_bits():
+    client = _kinds("2001:0:4136:e378:8c3a:63bf:3fff:fdd2")["teredo_client"]
+    assert client["flags"] == "0x8c3a"
+    assert client["random_flag_bits"] is True
+
+
+def test_eui64_pattern_with_group_bit_is_not_a_device_mac():
+    # IID 0300:00ff:fe00:0001 -> g bit set: a group address cannot be an interface's MAC
+    called = []
+    info = interface_id(ip("2001:db8::300:ff:fe00:1"), lambda mac: called.append(mac))
+    assert info["type"] == "eui64_pattern_group_bit"
+    assert "mac" not in info
+    assert called == []
+
+
+@pytest.mark.parametrize(
+    "address,rfc",
+    [
+        ("2001:db8::200:5eff:fe00:5213", "RFC 6543"),  # Proxy Mobile IPv6
+        ("2001:db8::200:5eff:fe00:0", "RFC 4291, RFC 5453"),
+        ("2001:db8::200:5eff:feff:ffff", "RFC 4291, RFC 5453"),
+    ],
+)
+def test_iana_reserved_interface_ids(address, rfc):
+    info = interface_id(ip(address))
+    assert info["type"] == "reserved_iid"
+    assert info["rfc"] == rfc
+    assert "mac" not in info
+
+
+def test_just_outside_reserved_iid_block_is_eui64():
+    assert interface_id(ip("2001:db8::200:5eff:fd00:1")) is not None
+    assert interface_id(ip("2001:db8::200:5fff:fe00:1"))["type"] == "eui64"

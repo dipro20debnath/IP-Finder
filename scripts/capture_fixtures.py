@@ -6,7 +6,7 @@ Usage (from the project root, inside the virtual environment):
     python scripts/capture_fixtures.py                   # default IPs
     python scripts/capture_fixtures.py 8.8.8.8 1.1.1.1   # your own IPs
     python scripts/capture_fixtures.py --list            # sources and key status
-    python scripts/capture_fixtures.py --only ip-api rdap 8.8.8.8
+    python scripts/capture_fixtures.py 8.8.8.8 --only ip-api rdap   # IPs before --only
 
 API keys come from .env or the environment (see .env.example). Keys are never
 written into fixture files: URLs are redacted and request headers are not saved.
@@ -33,7 +33,7 @@ sys.path.insert(0, str(ROOT))
 
 from ipfinder.analysis.offline import analyze  # noqa: E402
 from ipfinder.core.config import Config  # noqa: E402
-from ipfinder.core.validator import InvalidIPError, parse_ip  # noqa: E402
+from ipfinder.core.validator import parse_ip  # noqa: E402
 
 DEFAULT_IPS = ("8.8.8.8", "1.1.1.1", "2001:4860:4860::8888")
 USER_AGENT = "ip-finder-fixture-capture/2.0 (+https://github.com/dipro20debnath/IP-Finder)"
@@ -141,8 +141,8 @@ def lookup_targets(inputs) -> tuple[list[str], list[str]]:
     for raw in inputs:
         try:
             decision = analyze(parse_ip(raw))["lookup"]
-        except InvalidIPError as exc:
-            problems.append(f"{raw}: {exc}")
+        except ValueError as exc:  # InvalidIPError is a ValueError subclass
+            problems.append(f"{raw!r}: {exc}")
             continue
         if decision["eligible"]:
             if decision["target"] not in targets:

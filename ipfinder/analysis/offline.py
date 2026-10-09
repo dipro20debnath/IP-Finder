@@ -24,8 +24,8 @@ def decide_lookup(
                     "reason": f"Using the IPv4 address embedded in this {cls_name} address "
                     f"({kind}, {entry['rfc']})",
                 }
-    if cls_reachable is True:
-        return {"eligible": True, "target": ip_text, "reason": "Globally reachable address"}
+    # A wrapper whose embedded IPv4 is not public must not fall back to the wrapper
+    # itself: e.g. RFC 6052 section 3.1 forbids non-global IPv4 inside 64:ff9b::/96.
     candidates = [e for e in embedded if e["kind"] in _LOOKUP_VIA_EMBEDDED]
     if candidates:
         detail = ", ".join(f"{e['kind']} {e['address']} is {e['category']}" for e in candidates)
@@ -35,6 +35,8 @@ def decide_lookup(
             "reason": f"{cls_name} ({cls_rfc}) address whose embedded IPv4 is not public "
             f"({detail})",
         }
+    if cls_reachable is True:
+        return {"eligible": True, "target": ip_text, "reason": "Globally reachable address"}
     return {
         "eligible": False,
         "target": None,

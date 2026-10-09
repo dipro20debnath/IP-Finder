@@ -6,6 +6,7 @@ Real environment variables win over .env (same rule as python-dotenv's default).
 from __future__ import annotations
 
 import os
+import re
 from collections.abc import Mapping
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -25,27 +26,38 @@ KNOWN_KEYS = (
 PROFILES = ("quick", "standard", "full")
 
 
+_EXPORT = re.compile(r"export\s+")
+_INLINE_COMMENT = re.compile(r"\s#")
+
+
+def _parse_value(value: str) -> str:
+    """'quoted' or "quoted" values keep everything inside the quotes; otherwise a
+    '#' preceded by whitespace starts a comment."""
+    if value[:1] in ("'", '"'):
+        end = value.find(value[0], 1)
+        if end != -1:
+            return value[1:end]
+    match = _INLINE_COMMENT.search(value)
+    return (value[: match.start()] if match else value).strip()
+
+
 def read_dotenv(path: str | Path) -> dict[str, str]:
-    """Minimal .env parser: KEY=VALUE lines, '#' comments, optional 'export ' and quotes."""
+    """Minimal .env parser: KEY=VALUE lines, '#' comments (whole-line or after
+    whitespace), optional 'export ' prefix and quotes."""
     values: dict[str, str] = {}
     try:
-        lines = Path(path).read_text(encoding="utf-8").splitlines()
-    except OSError:
+        lines = Path(path).read_text(encoding="utf-8-sig").splitlines()
+    except (OSError, UnicodeError):
         return values
     for line in lines:
         line = line.strip()
         if not line or line.startswith("#") or "=" not in line:
             continue
-        if line.startswith("export "):
-            line = line[len("export ") :].lstrip()
+        line = _EXPORT.sub("", line, count=1) if _EXPORT.match(line) else line
         key, value = line.split("=", 1)
-        key, value = key.strip(), value.strip()
-        if len(value) >= 2 and value[0] == value[-1] and value[0] in "'\"":
-            value = value[1:-1]
-        elif " #" in value:
-            value = value.split(" #", 1)[0].rstrip()
+        key = key.strip()
         if key:
-            values[key] = value
+            values[key] = _parse_value(value.strip())
     return values
 
 

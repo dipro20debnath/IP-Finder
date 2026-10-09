@@ -14,6 +14,7 @@ import time
 
 from ipfinder.core.config import Config
 from ipfinder.core.models import IPReport, ProviderResult
+from ipfinder.core.text import display_safe
 from ipfinder.core.validator import InvalidIPError, parse_ip
 from ipfinder.providers import default_providers
 from ipfinder.providers.base import LookupContext, Provider, ProviderError
@@ -78,4 +79,12 @@ async def analyze_many(
             reports.append(await analyze(raw, config, providers))
         except InvalidIPError as exc:
             errors.append({"input": raw, "error": exc.message, "hint": exc.hint})
+        except ValueError as exc:  # defence in depth: one bad line never sinks a batch
+            errors.append(
+                {
+                    "input": raw,
+                    "error": f"Unparseable input: {display_safe(str(exc))}",
+                    "hint": None,
+                }
+            )
     return reports, errors

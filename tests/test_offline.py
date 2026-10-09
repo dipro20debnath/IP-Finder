@@ -26,6 +26,10 @@ from tests.conftest import offline
         # the Teredo *server* is public (its location says nothing about the user)
         ("2001:0:4136:e378:8000:63bf:3fff:fdd2", False, None),
         ("::ffff:192.168.1.1", False, None),
+        # RFC 6052 3.1: the NAT64 well-known prefix must not carry non-global IPv4
+        ("64:ff9b::10.0.0.1", False, None),
+        ("64:ff9b::127.0.0.1", False, None),
+        ("64:ff9b::224.0.0.1", False, None),
         ("2002:c000:204::1", False, None),
         # ISATAP inside a global prefix: the IPv6 itself is what gets looked up
         ("2001:4860:4860:0:200:5efe:808:808", True, "2001:4860:4860:0:200:5efe:808:808"),
@@ -73,3 +77,8 @@ def test_no_agreement_flag_when_registry_says_na():
 
 def test_port_is_reported():
     assert offline("[2001:db8::1]:443")["port"] == 443
+
+
+def test_nat64_private_reason():
+    reason = offline("64:ff9b::10.0.0.1")["lookup"]["reason"]
+    assert "nat64 10.0.0.1 is private" in reason

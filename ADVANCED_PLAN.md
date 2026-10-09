@@ -397,7 +397,7 @@ class Provider(ABC):
 | `geoip2` | MaxMind GeoLite2 `.mmdb` পড়া |
 | `rich` | সুন্দর terminal table |
 | `argparse` (built-in) | CLI (extra dependency ছাড়া) |
-| `python-dotenv` | API key `.env` থেকে পড়া |
+| নিজস্ব `.env` parser (`core/config.py`) | API key `.env` থেকে পড়া (extra dependency ছাড়া) |
 | `folium` | HTML map (Leaflet) |
 | `pytest`, `respx` | Test ও HTTP mocking |
 
@@ -413,6 +413,8 @@ class Provider(ABC):
 ## 5. Core Algorithms
 
 ### 5.1 Offline Analysis (Python 3.13-এ পরীক্ষিত)
+
+> **Phase 1 আপডেট:** নিচের `classify()` প্রাথমিক নকশা, যা Python-এর `is_*` flag-এর উপর নির্ভর করে। বাস্তবায়নে এটা বদলে IANA registry-ভিত্তিক `ipfinder/core/special_ranges.classify()` করা হয়েছে, কারণ Python-এর flag কয়েকটি address-এ IANA-র সাথে মেলে না (যেমন `2001:1::3`, `5f00::1`; বিস্তারিত README-তে)। `embedded_ipv4()` ও `eui64_mac()`-এর ধারণা এখনও প্রযোজ্য; আসল code-এ group-bit ও IANA-reserved ID যাচাইও যোগ হয়েছে।
 
 ```python
 import ipaddress
@@ -614,7 +616,7 @@ python -m ipfinder update-lists                       # Tor, cloud ranges, Priva
 
 | Phase | সময় | কাজ | Definition of Done |
 |---|---|---|---|
-| **0. Setup ও source যাচাই** ✅ | ১–২ দিন | Repo structure, `pyproject.toml`, venv, `.env.example`; প্রতিটি API একবার হাতে চালিয়ে response `tests/fixtures/`-এ সংরক্ষণ | সব source-এর fixture আছে; key-গুলো `.env`-এ, git-এ নয় |
+| **0. Setup ও source যাচাই** 🟡 (script প্রস্তুত, fixture রেকর্ড বাকি) | ১–২ দিন | Repo structure, `pyproject.toml`, venv, `.env.example`; প্রতিটি API একবার হাতে চালিয়ে response `tests/fixtures/`-এ সংরক্ষণ | সব source-এর fixture আছে; key-গুলো `.env`-এ, git-এ নয় |
 | **1. Core + Offline** ✅ | ৩–৪ দিন | Validator, L1 (classify, CGNAT, embedded IPv4, EUI-64), models, CLI skeleton | Private/CGNAT/IPv6 test সব pass |
 | **2. Geo + Network** | ১ সপ্তাহ | ip-api (single+batch), IPinfo Lite, MaxMind, Team Cymru, PeeringDB; rate limiter; cache | `quick` profile কাজ করে; 45/min limit কখনো ভাঙে না |
 | **3. Registry + Routing + DNS** | ১ সপ্তাহ | RDAP, RIPEstat (prefix, RPKI, neighbours, abuse), PTR + FCrDNS, Geofeed | Abuse email ও RPKI status দেখায় |

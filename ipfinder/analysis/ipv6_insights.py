@@ -49,6 +49,14 @@ IPV6_WELL_KNOWN_MULTICAST = {
 }
 SOLICITED_NODE = ipaddress.ip_network("ff02::1:ff00:0/104")
 
+TEREDO_CONE_BIT = 0x8000
+TEREDO_RANDOM_BITS = 0x3CFF  # the 12 "A" bits of CRAAAAUG AAAAAAAA (RFC 5991)
+
+# IANA "Reserved IPv6 Interface Identifiers" registry (RFC 5453) entries that look
+# like Modified EUI-64 (built from the IANA Ethernet block 00-00-5E).
+_RESERVED_IID_PMIPV6 = 0x02005EFFFE005213  # Proxy Mobile IPv6, RFC 6543
+_RESERVED_IID_BLOCK = (0x02005EFFFE000000, 0x02005EFFFEFFFFFF)  # RFC 4291 / RFC 5453
+
 
 def _embedded_entry(kind: str, v4: ipaddress.IPv4Address, rfc: str, **detail) -> dict:
     cls = classify(v4)
@@ -83,11 +91,17 @@ def embedded_ipv4(ip: ipaddress.IPv6Address) -> list[dict]:
             _embedded_entry(
                 "teredo_client",
                 client,
-                "RFC 4380",
+                "RFC 4380, RFC 5991",
                 role="client's public (NAT) IPv4",
                 client_port=port,
                 flags=f"0x{flags:04x}",
-                cone_nat=bool(flags & 0x8000),
+                cone_bit=bool(flags & TEREDO_CONE_BIT),
+                random_flag_bits=bool(flags & TEREDO_RANDOM_BITS),
+                flags_note=(
+                    "Flags layout CRAAAAUG AAAAAAAA. RFC 5991 deprecated the cone bit (C), so "
+                    "C=0 does not mean the client is not behind a cone NAT; non-zero A bits "
+                    "mean an RFC 5991 client that randomises its address"
+                ),
             )
         )
         found.append(_embedded_entry("teredo_server", server, "RFC 4380", role="Teredo server"))
@@ -131,6 +145,27 @@ def interface_id(ip: ipaddress.IPv6Address, oui_lookup=None) -> dict | None:
             "rfc": "RFC 4291",
         }
 
+    if _RESERVED_IID_BLOCK[0] <= value <= _RESERVED_IID_BLOCK[1]:
+        if value == _RESERVED_IID_PMIPV6:
+            name, rfc = "Proxy Mobile IPv6 (shared by every Mobile Access Gateway)", "RFC 6543"
+        else:
+            name, rfc = "reserved, IANA Ethernet block 00-00-5E", "RFC 4291, RFC 5453"
+        return {
+            "type": "reserved_iid",
+            "description": f"IANA-reserved interface ID: {name}; not a device's own MAC",
+            "rfc": rfc,
+        }
+
+    if iid[3:5] == b"\xff\xfe" and iid[0] & 0x01:
+        return {
+            "type": "eui64_pattern_group_bit",
+            "description": (
+                "Has the ff:fe EUI-64 marker but the g (individual/group) bit is set, so it "
+                "was not built from a device's own (individual) MAC address"
+            ),
+            "rfc": "RFC 4291 Appendix A, RFC 7136",
+        }
+
     if iid[3:5] == b"\xff\xfe":
         mac_bytes = bytes([iid[0] ^ 0x02]) + iid[1:3] + iid[5:8]
         mac = ":".join(f"{b:02x}" for b in mac_bytes)
@@ -138,7 +173,7 @@ def interface_id(ip: ipaddress.IPv6Address, oui_lookup=None) -> dict | None:
         info = {
             "type": "eui64",
             "description": "Modified EUI-64: the interface ID was built from the device's MAC",
-            "rfc": "RFC 4291",
+            "rfc": "RFC 4291 Appendix A",
             "mac": mac,
             "mac_universally_administered": universal,
             "oui": mac[:8],
@@ -179,7 +214,8 @@ def interface_id(ip: ipaddress.IPv6Address, oui_lookup=None) -> dict | None:
             "description": "Small, manually assigned interface ID (typical for servers/routers)",
         }
 
-    if value >> 32 == 0:
+    # 0x01000000 and up: an IPv4 in 0.0.0.0/8 ("this network") is never a host address.
+    if value >> 32 == 0 and value >= 0x01000000:
         return {
             "type": "possible_embedded_ipv4",
             "description": "Upper 32 bits are zero; the lower 32 bits may be an IPv4 address",
@@ -187,11 +223,23 @@ def interface_id(ip: ipaddress.IPv6Address, oui_lookup=None) -> dict | None:
             "confidence": "low (heuristic)",
         }
 
+    non_zero_groups = sum(1 for i in range(0, 8, 2) if iid[i : i + 2] != b"\x00\x00")
+    if non_zero_groups <= 2:
+        return {
+            "type": "manual",
+            "description": (
+                "Mostly-zero interface ID: likely manually or DHCPv6 assigned "
+                "(servers, routers, address pools)"
+            ),
+            "confidence": "low (heuristic)",
+        }
+
     return {
         "type": "opaque",
         "description": (
-            "Random-looking interface ID: temporary/privacy (RFC 8981) or stable-private "
-            "(RFC 7217) address; no hardware information can be derived"
+            "No recognised structure: may be a temporary (RFC 8981), stable-private "
+            "(RFC 7217), DHCPv6-assigned or hand-picked ID; no hardware information "
+            "can be derived"
         ),
     }
 

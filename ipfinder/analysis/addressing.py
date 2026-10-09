@@ -5,7 +5,8 @@ from __future__ import annotations
 import ipaddress
 import platform
 
-from ipfinder.core.special_ranges import IPAddress
+from ipfinder.core.special_ranges import IPAddress, classify
+from ipfinder.core.text import ipv6_exploded
 
 IPV4_MULTICAST_BLOCKS = [
     # (prefix, name, rfc) - most specific first
@@ -40,12 +41,21 @@ IPV4_WELL_KNOWN_MULTICAST = {
 def compressed(ip: IPAddress) -> str:
     """Canonical text form, identical on every Python version.
 
-    IPv4-mapped IPv6 is written ``::ffff:a.b.c.d`` (RFC 5952 section 5); Python
-    3.13 prints it that way but 3.12 and older print ``::ffff:808:808``.
+    IPv4-mapped IPv6 is written ``::ffff:a.b.c.d`` (RFC 5952 section 5). CPython's
+    own output depends on the patch release: 3.12.3 prints ``::ffff:808:808``,
+    while 3.10.20, 3.11.17 and 3.13+ print ``::ffff:8.8.8.8``.
     """
     if ip.version == 6 and ip.ipv4_mapped is not None:
         return f"::ffff:{ip.ipv4_mapped}"
     return str(ip)
+
+
+def _sixtofour_prefix(ip: ipaddress.IPv4Address) -> str | None:
+    """2002:V4ADDR::/48 exists only for a globally unique IPv4 address (RFC 3056
+    section 2; RFC 3964 section 5.3.1 lists the disallowed ranges)."""
+    if classify(ip).globally_reachable is not True:
+        return None
+    return f"{ipaddress.IPv6Address((0x2002 << 112) | (int(ip) << 80))}/48"
 
 
 def representations(ip: IPAddress) -> dict:
@@ -58,11 +68,11 @@ def representations(ip: IPAddress) -> dict:
             "binary": ".".join(f"{octet:08b}" for octet in ip.packed),
             "reverse_pointer": ip.reverse_pointer,
             "ipv4_mapped_ipv6": f"::ffff:{ip}",
-            "sixtofour_prefix": f"{ipaddress.IPv6Address((0x2002 << 112) | (value << 80))}/48",
+            "sixtofour_prefix": _sixtofour_prefix(ip),
         }
     return {
         "compressed": compressed(ip),
-        "exploded": ip.exploded,
+        "exploded": ipv6_exploded(value),
         "integer": value,
         "hex": f"0x{value:032x}",
         "reverse_pointer": ip.reverse_pointer,

@@ -32,6 +32,7 @@ CASES = [
     ("192.31.196.1", "as112", "RFC 7535", True),
     ("192.52.193.1", "amt", "RFC 7450", True),
     ("192.88.99.1", "deprecated", "RFC 7526", None),
+    ("192.88.99.2", "anycast", "RFC 6751", False),
     ("192.175.48.6", "as112", "RFC 7534", True),
     ("198.18.0.1", "benchmarking", "RFC 2544", False),
     ("198.19.255.255", "benchmarking", "RFC 2544", False),
@@ -49,6 +50,8 @@ CASES = [
     ("64:ff9b::808:808", "translation", "RFC 6052", True),
     ("64:ff9b:1::1", "translation", "RFC 8215", False),
     ("100::1", "discard", "RFC 6666", False),
+    ("100:0:0:1::1", "dummy", "RFC 9780", False),
+    ("100:0:0:2::1", "unallocated", "RFC 4291", False),
     ("2001:0:4136:e378:8000:63bf:3fff:fdd2", "tunnel", "RFC 4380", None),
     ("2001:1::1", "anycast", "RFC 7723", True),
     ("2001:1::2", "anycast", "RFC 8155", True),
@@ -110,3 +113,9 @@ def test_to_dict_is_json_friendly():
         "globally_reachable": False,
         "source": "IANA special-purpose registry",
     }
+
+
+def test_range_text_matches_iana_notation_on_every_python():
+    # Python 3.13 would print ::ffff:0.0.0.0/96; IANA writes ::ffff:0:0/96.
+    assert classify(ip("::ffff:8.8.8.8")).to_dict()["range"] == "::ffff:0:0/96"
+    assert classify(ip("64:ff9b::808:808")).to_dict()["range"] == "64:ff9b::/96"

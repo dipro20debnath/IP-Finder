@@ -29,7 +29,7 @@ def test_ipv4_representations_private():
     assert rep["integer"] == 3232235786
     assert rep["hex"] == "0xc0a8010a"
     assert rep["reverse_pointer"] == "10.1.168.192.in-addr.arpa"
-    assert rep["sixtofour_prefix"] == "2002:c0a8:10a::/48"
+    assert rep["sixtofour_prefix"] is None  # RFC 3056: needs a globally unique IPv4
 
 
 def test_ipv6_representations():
@@ -41,9 +41,19 @@ def test_ipv6_representations():
 
 
 def test_ipv4_mapped_text_is_the_same_on_every_python():
-    # Python <= 3.12 prints ::ffff:808:808, 3.13+ prints ::ffff:8.8.8.8 (RFC 5952 form).
+    # CPython output depends on the patch release (3.12.3 prints ::ffff:808:808,
+    # 3.10.20 / 3.11.17 / 3.13+ print ::ffff:8.8.8.8); IP Finder normalises it.
+    rep = representations(ip("::ffff:8.8.8.8"))
     assert compressed(ip("::ffff:8.8.8.8")) == "::ffff:8.8.8.8"
-    assert representations(ip("::ffff:8.8.8.8"))["compressed"] == "::ffff:8.8.8.8"
+    assert rep["compressed"] == "::ffff:8.8.8.8"
+    assert rep["exploded"] == "0000:0000:0000:0000:0000:ffff:0808:0808"
+
+
+@pytest.mark.parametrize(
+    "address", ["10.0.0.1", "127.0.0.1", "224.0.0.1", "0.0.0.0", "255.255.255.255", "100.64.0.1"]
+)
+def test_no_6to4_prefix_for_non_global_ipv4(address):
+    assert representations(ip(address))["sixtofour_prefix"] is None
 
 
 @pytest.mark.parametrize(

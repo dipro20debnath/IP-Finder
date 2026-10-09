@@ -7,14 +7,20 @@
     ipfinder 8.8.8.8       (shorthand for "lookup")
     ipfinder               (interactive prompt, like v1.0)
 
+Reports go to stdout; prompts, status lines and errors go to stderr, so
+"ipfinder -f json > out.json" always produces valid JSON.
+
 Exit codes: 0 success, 1 at least one input was not a valid IP,
-2 command-line usage error, 3 internal error, 130 interrupted (Ctrl+C).
+2 usage error (bad option, unreadable input file, unwritable output file),
+3 internal error, 130 interrupted (Ctrl+C).
 """
 
 from __future__ import annotations
 
 import argparse
 import asyncio
+import codecs
+import io
 import sys
 from pathlib import Path
 
@@ -25,6 +31,7 @@ from rich.text import Text
 from ipfinder import __version__
 from ipfinder.core.config import Config
 from ipfinder.core.orchestrator import analyze_many
+from ipfinder.core.text import display_safe
 from ipfinder.output import json_out, terminal
 from ipfinder.providers import PLANNED_PROVIDERS, default_providers
 
@@ -65,45 +72,81 @@ def _read_lines(lines) -> list[str]:
     return out
 
 
+def _read_input_file(path: Path) -> list[str]:
+    """UTF-8 (with or without BOM) or UTF-16 with BOM, e.g. from Windows PowerShell."""
+    data = path.read_bytes()
+    if data.startswith((codecs.BOM_UTF16_LE, codecs.BOM_UTF16_BE)):
+        text = data.decode("utf-16")
+    else:
+        text = data.decode("utf-8-sig")
+    return _read_lines(text.splitlines())
+
+
+def _prompt(message: str) -> str:
+    # The prompt goes to stderr so that "ipfinder -f json > out.json" stays valid JSON.
+    sys.stderr.write(message)
+    sys.stderr.flush()
+    line = sys.stdin.readline()
+    if not line:
+        raise EOFError
+    return line.strip()
+
+
 def _collect_inputs(args) -> list[str]:
     inputs = list(args.ips)
     if args.input_file:
-        inputs += _read_lines(args.input_file.read_text(encoding="utf-8").splitlines())
+        inputs += _read_input_file(args.input_file)
     if not inputs and not sys.stdin.isatty():
         inputs = _read_lines(sys.stdin)
     if not inputs:
-        inputs = [input("Enter an IP address: ")]
+        inputs = [_prompt("Enter an IP address: ")]
     return inputs
 
 
-def _cmd_lookup(args, console: Console) -> int:
+def _write_output(path: Path, text: str, messages: Console) -> bool:
+    try:
+        path.write_text(text, encoding="utf-8")
+    except (OSError, UnicodeError) as exc:
+        messages.print(Text(f"[!] Cannot write {path}: {exc}", style="red"))
+        return False
+    return True
+
+
+def _cmd_lookup(args, console: Console, messages: Console) -> int:
     try:
         inputs = _collect_inputs(args)
-    except OSError as exc:
-        console.print(Text(f"[!] Cannot read {args.input_file}: {exc}", style="red"))
+    except (OSError, UnicodeError) as exc:
+        reason = "not UTF-8 or UTF-16 text" if isinstance(exc, UnicodeError) else exc
+        messages.print(Text(f"[!] Cannot read {args.input_file}: {reason}", style="red"))
         return EXIT_USAGE
-    except (EOFError, KeyboardInterrupt):
-        console.print(Text("[!] No IP address given.", style="red"))
+    except EOFError:
+        messages.print(Text("[!] No IP address given.", style="red"))
         return EXIT_USAGE
 
     config = Config.load()
     reports, errors = asyncio.run(analyze_many(inputs, config))
 
     if args.format == "json":
-        rendered = json_out.render(reports, errors)
-        if args.output:
-            args.output.write_text(rendered + "\n", encoding="utf-8")
-            console.print(Text(f"Saved JSON report to {args.output}", style="green"))
-        else:
-            print(rendered)
+        rendered = json_out.render(reports, errors) + "\n"
     elif args.output:
-        with args.output.open("w", encoding="utf-8") as fh:
-            terminal.print_reports(
-                Console(file=fh, no_color=True, width=110), reports, errors, args.verbose
-            )
-        console.print(Text(f"Saved text report to {args.output}", style="green"))
+        buffer = io.StringIO()
+        terminal.print_reports(
+            Console(file=buffer, no_color=True, width=110), reports, errors, args.verbose
+        )
+        rendered = buffer.getvalue()
     else:
         terminal.print_reports(console, reports, errors, args.verbose)
+        rendered = None
+
+    if rendered is not None:
+        if args.output:
+            # Rendered fully before opening the file, so a failure never truncates it.
+            if not _write_output(args.output, rendered, messages):
+                return EXIT_USAGE
+            kind = "JSON" if args.format == "json" else "text"
+            messages.print(Text(f"Saved {kind} report to {args.output}", style="green"))
+        else:
+            sys.stdout.write(rendered)
 
     return EXIT_INVALID_INPUT if errors else EXIT_OK
 
@@ -127,21 +170,44 @@ def _cmd_sources(console: Console) -> int:
     return EXIT_OK
 
 
+def _harden_streams() -> None:
+    """Never crash on output the terminal's encoding cannot show (e.g. Bengali
+    digits on a Windows cp1252 pipe); show an escape sequence instead."""
+    for name, errors in (
+        ("stdout", "backslashreplace"),
+        ("stderr", "backslashreplace"),
+        ("stdin", "replace"),
+    ):
+        stream = getattr(sys, name, None)
+        try:
+            stream.reconfigure(errors=errors)
+        except (AttributeError, ValueError, io.UnsupportedOperation):
+            pass
+
+
 def main(argv: list[str] | None = None) -> int:
     argv = list(sys.argv[1:] if argv is None else argv)
     # "ipfinder 8.8.8.8" and plain "ipfinder" are shorthand for "ipfinder lookup ..."
     if not argv or argv[0] not in ("lookup", "sources", "-h", "--help", "--version"):
         argv = ["lookup", *argv]
     args = _build_parser().parse_args(argv)
-    console = Console(no_color=getattr(args, "no_color", False))
+    _harden_streams()
+    no_color = getattr(args, "no_color", False)
+    console = Console(no_color=no_color)  # reports
+    # prompts, status and errors; soft_wrap keeps file paths on one copyable line
+    messages = Console(stderr=True, no_color=no_color, soft_wrap=True)
     try:
         if args.command == "sources":
             return _cmd_sources(console)
-        return _cmd_lookup(args, console)
+        return _cmd_lookup(args, console, messages)
     except KeyboardInterrupt:
         return EXIT_INTERRUPTED
     except Exception as exc:  # last-resort guard: show a clear message, not a traceback
-        console.print(Text(f"[!] Internal error: {type(exc).__name__}: {exc}", style="bold red"))
+        text = f"[!] Internal error: {type(exc).__name__}: {display_safe(str(exc))}"
+        try:
+            messages.print(Text(text, style="bold red"))
+        except Exception:
+            sys.__stderr__.write(text.encode("ascii", "backslashreplace").decode() + "\n")
         return EXIT_INTERNAL
 
 

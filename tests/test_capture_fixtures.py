@@ -135,3 +135,21 @@ def test_list_command(capsys):
 def test_unknown_source_is_rejected():
     with pytest.raises(SystemExit):
         cf.main(["--only", "nonexistent"])
+
+
+def test_documented_only_usage_reaches_capture(monkeypatch, tmp_path):
+    seen = {}
+
+    def fake_capture(ips, keys, out_dir, sources, **kwargs):
+        seen["ips"], seen["sources"] = list(ips), [s.name for s in sources]
+        return []
+
+    monkeypatch.setattr(cf, "capture", fake_capture)
+    assert cf.main(["8.8.8.8", "--only", "ip-api", "rdap", "--out", str(tmp_path)]) == 0
+    assert seen == {"ips": ["8.8.8.8"], "sources": ["ip-api", "rdap"]}
+
+
+def test_lookup_targets_survives_huge_input():
+    targets, problems = cf.lookup_targets(["1.1.1." + "9" * 5000, "8.8.8.8"])
+    assert targets == ["8.8.8.8"]
+    assert len(problems) == 1

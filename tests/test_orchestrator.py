@@ -157,3 +157,20 @@ def test_report_to_dict_round_trips_through_json(config):
     assert data["ip"] == "8.8.8.8"
     assert data["notes"] and "Normalised" in data["notes"][0]
     assert data["results"][0]["provider"] == "offline"
+
+
+def test_analyze_many_survives_unexpected_value_error(config, monkeypatch):
+    import ipfinder.core.orchestrator as orch
+
+    real = orch.parse_ip
+
+    def flaky(raw):
+        if raw == "boom":
+            raise ValueError("Exceeds the limit (4300 digits)")
+        return real(raw)
+
+    monkeypatch.setattr(orch, "parse_ip", flaky)
+    reports, errors = run(analyze_many(["8.8.8.8", "boom", "1.1.1.1"], config))
+    assert [r.ip for r in reports] == ["8.8.8.8", "1.1.1.1"]
+    assert errors[0]["input"] == "boom"
+    assert "4300 digits" in errors[0]["error"]

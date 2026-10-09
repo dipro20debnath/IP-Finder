@@ -14,6 +14,9 @@ from rich.text import Text
 
 from ipfinder import DISCLAIMER, __version__
 from ipfinder.core.models import IPReport
+from ipfinder.core.text import display_safe
+
+_SIXTOFOUR_NA = Text("n/a: needs a globally unique IPv4 (RFC 3056)", style="dim")
 
 
 def _yes_no(value: bool | None) -> Text:
@@ -63,7 +66,7 @@ def _summary(report: IPReport, data: dict) -> Table:
         "Summary",
         [
             ("Address", address),
-            ("Zone ID", f"%{data['scope_id']}" if data.get("scope_id") else None),
+            ("Zone ID", f"%{display_safe(data['scope_id'])}" if data.get("scope_id") else None),
             ("Type", f"{cls['name']}  [{_range_label(cls)}{cls['rfc']}]"),
             ("Globally reachable", _yes_no(cls["globally_reachable"])),
             ("Online lookup target", target),
@@ -84,7 +87,10 @@ def _representations(data: dict) -> Table:
     }
     return _section(
         "Representations",
-        [(labels.get(k, k), v) for k, v in data["representations"].items()],
+        [
+            (labels.get(k, k), _SIXTOFOUR_NA if k == "sixtofour_prefix" and v is None else v)
+            for k, v in data["representations"].items()
+        ],
     )
 
 
@@ -148,14 +154,13 @@ def _ipv6(data: dict) -> list[Table]:
                     "Vendor",
                     iid.get("vendor")
                     or iid.get("vendor_note")
-                    or Text("unknown (add data/oui.csv, see data/README.md)", style="dim"),
+                    or Text(f"unknown ({data.get('oui_database', 'no OUI list')})", style="dim"),
                 ),
                 ("Privacy", Text(iid["privacy"], style="yellow")),
-                ("Confidence", iid["confidence"]),
             ]
         elif iid["type"] in ("isatap", "possible_embedded_ipv4"):
             rows.append(("IPv4 in interface ID", iid["ipv4"]))
-            rows.append(("Confidence", iid.get("confidence")))
+        rows.append(("Confidence", iid.get("confidence")))
         tables.append(_section("Interface identifier", rows))
     for entry in v6.get("embedded_ipv4", []):
         rows = [
@@ -164,7 +169,13 @@ def _ipv6(data: dict) -> list[Table]:
             ("Type of that IPv4", entry["category"]),
             ("Globally reachable", _yes_no(entry["globally_reachable"])),
             ("Client port", entry.get("client_port")),
-            ("Cone NAT flag", entry.get("cone_nat")),
+            ("Flags", entry.get("flags")),
+            ("Cone bit (deprecated)", entry.get("cone_bit")),
+            ("RFC 5991 random bits", entry.get("random_flag_bits")),
+            (
+                "Flags note",
+                Text(entry["flags_note"], style="dim") if "flags_note" in entry else None,
+            ),
             ("RFC", entry["rfc"]),
         ]
         tables.append(_section(f"Embedded IPv4 ({entry['kind']})", rows))

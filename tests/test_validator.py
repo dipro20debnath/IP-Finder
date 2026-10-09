@@ -98,3 +98,83 @@ def test_leading_zero_hint_mentions_cve():
 def test_none_input():
     with pytest.raises(InvalidIPError):
         parse_ip(None)
+
+
+def test_byte_order_mark_is_ignored():
+    assert parse_ip("\ufeff8.8.8.8").address == ip("8.8.8.8")
+
+
+@pytest.mark.parametrize(
+    "raw,message_part",
+    [
+        ("9" * 5000, "too long"),
+        ("9" * 2000, "larger than any IPv6"),
+        ("1.2.3.4:" + "9" * 2000, "out of range"),
+        ("1.1.1." + "9" * 2000, "out of range"),
+        ("1.1.1.0001", "Leading zero"),
+    ],
+)
+def test_huge_numbers_give_clean_errors(raw, message_part):
+    # Python 3.10.7+ refuses int() on >4300-digit strings with a plain ValueError;
+    # the validator must never let that escape.
+    with pytest.raises(InvalidIPError) as excinfo:
+        parse_ip(raw)
+    assert message_part in excinfo.value.message
+
+
+@pytest.mark.parametrize(
+    "raw,reads_as",
+    [
+        ("0x7f000001", "127.0.0.1"),
+        ("0x7f.1", "127.0.0.1"),
+        ("0xC0A80001", "192.168.0.1"),
+        ("0177.0.0.1", "127.0.0.1"),
+        ("1.2.3", "1.2.0.3"),
+        ("010.1.1.1", "8.1.1.1"),
+    ],
+)
+def test_inet_aton_forms_are_explained(raw, reads_as):
+    with pytest.raises(InvalidIPError) as excinfo:
+        parse_ip(raw)
+    assert reads_as in excinfo.value.hint
+    assert "hostname" not in excinfo.value.message
+
+
+def test_inet_aton_helper():
+    from ipfinder.core.validator import inet_aton
+
+    assert str(inet_aton("0x08080808")) == "8.8.8.8"
+    assert str(inet_aton("8.8.2056")) == "8.8.8.8"
+    assert inet_aton("1.2.3.256") is None
+    assert inet_aton("08.1.1.1") is None  # 8 is not an octal digit
+    assert inet_aton("1.2.3.4.5") is None
+
+
+@pytest.mark.parametrize(
+    "raw",
+    ["\x1b[2J\x1b[31mevil", "\x1b]52;c;ZWNobyBwd25lZA==\x1b\\", "8.8.8.8\u200b"],
+)
+def test_control_characters_are_escaped_in_messages(raw):
+    with pytest.raises(InvalidIPError) as excinfo:
+        parse_ip(raw)
+    assert "\x1b" not in str(excinfo.value)
+    assert "\u200b" not in str(excinfo.value)
+
+
+def test_zone_id_with_control_characters_is_rejected():
+    with pytest.raises(InvalidIPError) as excinfo:
+        parse_ip("fe80::1%\x1b[2J")
+    assert "Zone ID" in excinfo.value.message
+    assert "\x1b" not in excinfo.value.message
+
+
+def test_url_backslash_follows_browsers():
+    parsed = parse_ip("http://1.1.1.1\\@8.8.8.8/")
+    assert parsed.address == ip("1.1.1.1")
+    assert any("WHATWG" in n for n in parsed.notes)
+
+
+def test_url_userinfo_note():
+    parsed = parse_ip("http://user:pass@8.8.8.8/")
+    assert parsed.address == ip("8.8.8.8")
+    assert any("user-info" in n for n in parsed.notes)
