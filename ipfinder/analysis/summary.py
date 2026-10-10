@@ -1,7 +1,8 @@
 """Combine what the providers found into a short summary.
 
-Every source is shown side by side and only disagreements are flagged; the
-weighted consensus and confidence score arrive in Phase 6.
+These are plain per-source facts (which country each source names, the map pin,
+local time, abuse contacts...). The weighted consensus, classification and scores
+are in ipfinder.analysis.verdict.
 """
 
 from __future__ import annotations
@@ -117,7 +118,7 @@ def build_summary(results: dict, now: datetime | None = None) -> dict:
 
 
 def _threat(results: dict) -> dict:
-    """Each L9 source's headline fact; the reputation score comes in Phase 6."""
+    """Each L9 source's headline fact; the reputation score is in the verdict."""
     out: dict = {}
     abuse = _ok_data(results, "abuseipdb")
     if abuse:
@@ -157,7 +158,7 @@ def _threat(results: dict) -> dict:
 
 
 def _anonymity(results: dict) -> dict:
-    """Plain facts from the L7 sources; the combined verdict comes in Phase 6."""
+    """Plain facts from the L7 sources; the combined label is in the verdict."""
     out: dict = {}
     tor = _ok_data(results, "tor")
     if tor:

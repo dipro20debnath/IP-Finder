@@ -540,6 +540,18 @@ Label: **≥70 High**, **40–69 Medium**, **<40 Low**।
 
 **Exposure Score (0–100):** খোলা port-এর সংখ্যা, risky port (23 Telnet, 445 SMB, 3389 RDP, 5900 VNC, 6379 Redis, 9200 Elasticsearch), CVE সংখ্যা (InternetDB)।
 
+### 5.5.1 বাস্তবায়নে যা যোগ বা বদল হয়েছে (Phase 6)
+
+কাজ করতে গিয়ে plan-এর heuristic-এ কয়েকটা জিনিস স্পষ্ট করতে হয়েছে। প্রতিটার কারণ নিচে:
+
+- **Spread** = যেকোনো দুটো source-এর মধ্যে সর্বোচ্চ দূরত্ব (median বিন্দু থেকে নয়)। Plan-এর নিজের উদাহরণে ঢাকা থেকে চট্টগ্রাম 214 km-কে spread ধরা হয়েছে; median থেকে মাপলে সেটা 107 km হতো।
+- **MaxMind-এর accuracy radius** spread-এর চেয়ে বড় হলে সেটাই uncertainty। একটা database-ও নিজে অনেক ভুল হতে পারে।
+- **নতুন নিয়ম:** একটাই coordinate source → −10; কোনো coordinate নেই → −20; source-রা দেশ নিয়ে একমত নয় → −20।
+- **Private Relay**-কে anonymizer (−50) না ধরে −20। কারণ Apple ইচ্ছা করে user-এর মোটামুটি এলাকা রাখে।
+- **Reputation label:** 0 = কিছু পাওয়া যায়নি, 1–29 Low, 30–59 Medium, 60+ High। Spamhaus PBL listing point পায় না, কারণ এটা policy, abuse নয়। কোনো source না চললে score দেখানো হয় না।
+- **Exposure:** প্রতি খোলা port +2 (সর্বোচ্চ 20), প্রতি প্রায়ই-আক্রান্ত service +15 (সর্বোচ্চ 45), প্রতি সম্ভাব্য CVE +5 (সর্বোচ্চ 35)।
+- **Classification:** "Possible VPN or proxy" (hosting ছাড়া) আর AbuseIPDB-এর usage type নতুন signal। হেরে যাওয়া signal-ও "other signals" হিসেবে দেখানো হয়।
+
 ### 5.6 RTT Plausibility (Speed-of-Light Check)
 
 Fiber-এ আলো প্রতি millisecond-এ প্রায় **200 km** যায়। তাই:
@@ -622,7 +634,7 @@ python -m ipfinder update-lists                       # Tor, cloud ranges, Priva
 | **3. Registry + Routing + DNS** ✅ (code ও test; আসল API-তে প্রথম চালানো বাকি) | ১ সপ্তাহ | RDAP, RIPEstat (prefix, RPKI, neighbours, abuse), PTR + FCrDNS, Geofeed | Abuse email ও RPKI status দেখায় |
 | **4. Anonymity + Exposure** ✅ (code ও test; AWS ও X4BNet list live দিয়ে যাচাই) | ১ সপ্তাহ | Cloud ranges, Tor, Private Relay, VPN-ASN list, InternetDB; `update-lists` | Tor exit IP সঠিকভাবে চিহ্নিত হয় |
 | **5. Threat Intel** ✅ (code ও test; আসল API-তে প্রথম চালানো বাকি) | ১ সপ্তাহ | AbuseIPDB, GreyNoise, VirusTotal, OTX, abuse.ch, Spamhaus DQS | Key না থাকলে provider "skipped (no key)" দেখায়, crash করে না |
-| **6. Analysis Engine** | ১ সপ্তাহ | Consensus, classification, confidence, reputation/exposure score, anycast | Score-গুলোর unit test আছে |
+| **6. Analysis Engine** ✅ (প্রতিটা score-এর unit test আছে; §5.5.1-এ বাস্তবায়নের পার্থক্য) | ১ সপ্তাহ | Consensus, classification, confidence, reputation/exposure score, anycast | Score-গুলোর unit test আছে |
 | **7. Active Mode** | ৩–৪ দিন | Ping, traceroute, TLS cert, RTT plausibility; confirmation prompt | `--active` ছাড়া কখনো চলে না |
 | **8. Reporting** | ১ সপ্তাহ | Rich terminal, JSON, CSV, HTML + folium map, batch progress bar | HTML report browser-এ map সহ খোলে |
 | **9. (ঐচ্ছিক) Web Dashboard** | ১–২ সপ্তাহ | FastAPI backend + Leaflet frontend; একই `ipfinder` package reuse | Browser থেকে lookup |

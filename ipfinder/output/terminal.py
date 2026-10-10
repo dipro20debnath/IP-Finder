@@ -81,6 +81,100 @@ def _summary(report: IPReport, data: dict) -> Table:
     )
 
 
+_LEVEL_STYLE = {
+    "high": "green",
+    "medium": "yellow",
+    "low": "red",
+}
+_RISK_STYLE = {"none found": "green", "low": "yellow", "medium": "bold red", "high": "bold red"}
+_STRENGTH = {
+    "list": "from published lists",
+    "estimate": "estimate from flags, hostnames or network type",
+}
+
+
+def _why(score: dict) -> str | None:
+    rules = score.get("breakdown") or []
+    if not rules:
+        return None
+    return "; ".join(f"{r['reason']} ({r['points']:+d})" for r in rules)
+
+
+def _verdict(report: IPReport) -> list[Table]:
+    verdict = report.verdict or {}
+    connection = verdict.get("connection")
+    if not connection:
+        return []
+    label = _safe(connection["label"], "bold")
+    if _STRENGTH.get(connection.get("strength")):
+        label.append(f"  ({_STRENGTH[connection['strength']]})", style="dim")
+    rows: list[tuple[str, object]] = [("Connection type", label)]
+    if connection.get("evidence"):
+        rows.append(("  evidence", "; ".join(connection["evidence"][:5])))
+    if connection.get("other_signals"):
+        rows.append(("  other signals", _safe("; ".join(connection["other_signals"]), "yellow")))
+
+    anycast = verdict.get("anycast") or {}
+    if anycast.get("anycast") and connection.get("code") != "anycast":
+        rows.append(("Anycast", _safe(f"yes - {'; '.join(anycast.get('reasons', []))}", "yellow")))
+
+    location = verdict.get("location")
+    if location:
+        place = ", ".join(v for v in (location.get("city"), location.get("country_code")) if v)
+        if anycast.get("anycast"):
+            place = f"{location.get('country_code') or '?'} (country only: anycast)"
+        detail = []
+        if len(location.get("coordinate_sources", [])) > 1:
+            detail.append(
+                f"{len(location['coordinate_sources'])} sources, up to "
+                f"{location.get('spread_km', 0):g} km apart"
+            )
+        if location.get("maxmind_radius_km") is not None:
+            detail.append(f"MaxMind radius {location['maxmind_radius_km']} km")
+        if not location.get("countries_agree", True):
+            votes = ", ".join(f"{c}: {'/'.join(s)}" for c, s in location["country_votes"].items())
+            detail.append(f"country votes {votes}")
+        text = place or "-"
+        if detail:
+            text += f"  ({'; '.join(detail)})"
+        rows.append(("Location (consensus)", text))
+
+    confidence = verdict.get("location_confidence")
+    if confidence:
+        rows.append(
+            (
+                "Location confidence",
+                _safe(
+                    f"{confidence['score']}/100 {confidence['label'].upper()}",
+                    _LEVEL_STYLE[confidence["label"]],
+                ),
+            )
+        )
+        rows.append(("  why", _why(confidence)))
+
+    for key, title in (("reputation", "Reputation"), ("exposure", "Exposure")):
+        score = verdict.get(key)
+        if not score:
+            continue
+        text = f"{score['score']}/100 {score['label'].upper()}"
+        text += f"  (from {len(score.get('sources', []))} source(s))"
+        rows.append((title, _safe(text, _RISK_STYLE[score["label"]])))
+        rows.append(("  why", _why(score)))
+        if score.get("note"):
+            rows.append(("  note", _safe(score["note"], "dim")))
+    if any(verdict.get(k) for k in ("location_confidence", "reputation", "exposure")):
+        rows.append(
+            (
+                "Note",
+                Text(
+                    "Scores are transparent rules, not probabilities; every point is listed above.",
+                    style="dim",
+                ),
+            )
+        )
+    return [_section("Verdict", rows)]
+
+
 def _representations(data: dict) -> Table:
     labels = {
         "compressed": "Compressed",
@@ -876,6 +970,7 @@ def render_report(report: IPReport, verbose: bool = False) -> Panel:
     offline = report.result("offline")
     data = offline.data
     parts: list = [_summary(report, data)]
+    parts += _verdict(report)
     parts += _location(report) + _network(report) + _routing(report)
     parts += _registration(report) + _abuse(report) + _reverse_dns(report)
     parts += _anonymity(report) + _flags(report) + _exposure(report) + _threat(report)

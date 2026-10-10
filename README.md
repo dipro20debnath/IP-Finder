@@ -1,10 +1,108 @@
-# IP Finder v2 (Phase 0–5)
+# IP Finder v2 (Phase 0–6)
 
 একটি IP address থেকে **আইনসঙ্গতভাবে যা যা জানা সম্ভব**, তা ধাপে ধাপে বের করার Python tool। পুরো roadmap: [ADVANCED_PLAN.md](ADVANCED_PLAN.md)।
 
-এই version-এ আছে **Phase 0 (setup)**, **Phase 1 (offline analysis)**, **Phase 2 (location ও network: ip-api, IPinfo Lite, MaxMind GeoLite2, Team Cymru, PeeringDB)**, **Phase 3 (registry, routing ও DNS: RDAP, RIPEstat BGP/RPKI, reverse DNS + FCrDNS, Geofeed)** **Phase 4 (anonymity ও exposure: Tor exit, iCloud Private Relay, cloud/CDN range, VPN/datacenter list, Shodan InternetDB; `update-lists`)** আর **Phase 5 (threat intelligence: AbuseIPDB, GreyNoise, VirusTotal, OTX, ThreatFox, URLhaus, Spamhaus; Feodo Tracker ও Spamhaus DROP list)**। কোনো API key ছাড়াই চলে; key বা database যোগ করলে আরও source যুক্ত হয়। সব source মিলিয়ে score আর verdict আসবে Phase 6-এ।
+এই version-এ আছে **Phase 0 (setup)**, **Phase 1 (offline analysis)**, **Phase 2 (location ও network: ip-api, IPinfo Lite, MaxMind GeoLite2, Team Cymru, PeeringDB)**, **Phase 3 (registry, routing ও DNS: RDAP, RIPEstat BGP/RPKI, reverse DNS + FCrDNS, Geofeed)**, **Phase 4 (anonymity ও exposure: Tor exit, iCloud Private Relay, cloud/CDN range, VPN/datacenter list, Shodan InternetDB; `update-lists`)** **Phase 5 (threat intelligence: AbuseIPDB, GreyNoise, VirusTotal, OTX, ThreatFox, URLhaus, Spamhaus; Feodo Tracker ও Spamhaus DROP list)** আর **Phase 6 (analysis engine: connection type, anycast, location consensus ও confidence, reputation ও exposure score)**। কোনো API key ছাড়াই চলে; key বা database যোগ করলে আরও source যুক্ত হয়। Active probing (ping, traceroute) আসবে Phase 7-এ, শুধু `--active` দিলে।
 
 > ⚠️ IP geolocation আনুমানিক। একটি IP address কোনো ব্যক্তিকে শনাক্ত করে না।
+
+---
+
+## Phase 6: analysis engine (verdict ও score)
+
+এখন report-এর শুরুতেই একটা **Verdict** অংশ আসে। এখানে সব source মিলিয়ে চারটা উত্তর দেওয়া হয়, আর প্রতিটা উত্তরের সাথে কোন নিয়মে কত point যোগ বা বিয়োগ হলো তা দেখানো হয় ("why")। এগুলো probability নয়, স্বচ্ছ নিয়ম।
+
+**১. Connection type** (প্রথম যে নিয়ম মেলে, সেটাই; plan-এর §5.3):
+
+| ক্রম | Signal | Label |
+|---|---|---|
+| 1 | Tor Project-এর list | Anonymizer: Tor exit relay |
+| 2 | Apple-এর Private Relay list | Privacy relay (VPN নয়) |
+| 3 | Anycast (নিচে দেখুন) | Anycast service |
+| 4 | Hosting signal + VPN/proxy signal | Likely VPN or proxy on a hosting network |
+| 5 | Hosting signal: cloud range, ip-api `hosting`, X4BNet datacenter list, AbuseIPDB "Data Center", PeeringDB "Content", hostname | Hosting / cloud |
+| 6 | VPN/proxy signal, hosting ছাড়া | Possible VPN or proxy |
+| 7 | Mobile: ip-api `mobile`, AbuseIPDB "Mobile ISP", hostname | Mobile network (প্রায়ই CGNAT) |
+| 8 | Hostname-এ `pool`, `dsl`, `dyn`… | Residential broadband |
+| 9–12 | PeeringDB / AbuseIPDB-এর network type | Education, Government, Business, ISP access network |
+
+প্রতিটা label-এর সাথে প্রমাণ থাকে, আর বলা থাকে সেটা প্রকাশিত list থেকে এসেছে (তথ্য) নাকি flag বা hostname থেকে (অনুমান)। Source-গুলো একে অপরের সাথে না মিললে (যেমন ip-api বলে "mobile", AbuseIPDB বলে "Data Center") বাকি signal-গুলোও "other signals" হিসেবে দেখায়, লুকায় না।
+
+**২. Anycast:** পরিচিত anycast public DNS (Google 8.8.8.8, Cloudflare 1.1.1.1, Quad9 9.9.9.9, OpenDNS-এর IPv4 ও IPv6), Cloudflare-এর range, AWS Global Accelerator (AWS নিজেই এগুলোকে "static anycast IP" বলে) → নিশ্চিত। Fastly-র range → "সম্ভবত"। Anycast হলে location শুধু দেশ পর্যন্ত দেখায়, কারণ address-টা একসাথে অনেক জায়গা থেকে চলে।
+
+**৩. Location consensus ও confidence:**
+- দেশ: weighted vote। Operator-এর নিজের geofeed আর Apple-এর Private Relay list ৩ ভোট, database-গুলো ১ ভোট।
+- শহর: জেতা দেশের ভেতরে যে শহর সবচেয়ে বেশি source বলে।
+- Spread: যেকোনো দুটো source-এর মধ্যে সবচেয়ে বেশি দূরত্ব। MaxMind-এর নিজের accuracy radius এর চেয়ে বড় হলে সেটাই ধরা হয়। ঢাকা থেকে চট্টগ্রাম = 214 km (test-এ যাচাই করা)।
+
+| নিয়ম | Point |
+|---|---|
+| Spread > 500 km / > 100 km | −40 / −25 |
+| শুধু একটা source coordinate দিয়েছে (মিলিয়ে দেখার কিছু নেই) | −10 |
+| কোনো source coordinate দেয়নি | −20 |
+| Source-রা দেশ নিয়ে একমত নয় | −20 |
+| Hosting / data centre (location server-এর, user-এর নয়) | −30 |
+| Anonymizer: Tor, VPN (আসল user যেকোনো জায়গায়) | −50 |
+| Private Relay (Apple শুধু user-এর মোটামুটি এলাকা রাখে) | −20 |
+| Mobile network (operator-এর gateway) | −20 |
+| Anycast | −60 |
+| RTT অসম্ভব (Phase 7-এর `--active`) | −30 |
+| Operator-এর geofeed consensus দেশের সাথে মেলে | +10 |
+
+৭০ বা তার বেশি হলে High, ৪০–৬৯ Medium, ৪০-এর কম Low। Plan-এর উদাহরণ (বাংলাদেশি mobile IP, source-দের মধ্যে 214 km পার্থক্য) → 100 − 25 − 20 = **55 Medium**। এটা test-এ আছে।
+
+**৪. Reputation ও exposure** (plan-এর §5.5; দুটো আলাদা প্রশ্ন, তাই কখনো যোগ করা হয় না):
+
+| Reputation-এর নিয়ম | Point |
+|---|---|
+| AbuseIPDB confidence × 0.4 | সর্বোচ্চ +40 |
+| GreyNoise: malicious | +25 |
+| VirusTotal: প্রতি malicious engine | +5, সর্বোচ্চ +25 |
+| Spamhaus ZEN (PBL বাদে), ThreatFox, URLhaus, Feodo, Spamhaus DROP-এর যেকোনোটায় listing | +20 (একবারই) |
+| Tor exit (ঝুঁকির সংকেত, অপরাধ নয়) | +10 |
+| GreyNoise RIOT (পরিচিত ভালো service) | −30 |
+
+| Exposure-এর নিয়ম (Shodan InternetDB) | Point |
+|---|---|
+| প্রতিটা খোলা port | +2, সর্বোচ্চ +20 |
+| প্রতিটা প্রায়ই-আক্রান্ত service (Telnet, SMB, RDP, Redis…) | +15, সর্বোচ্চ +45 |
+| প্রতিটা সম্ভাব্য CVE | +5, সর্বোচ্চ +35 |
+
+দুটো score-এর label একই: 0 = কিছু পাওয়া যায়নি, 1–29 Low, 30–59 Medium, 60 বা তার বেশি High। Score-এর পাশে লেখা থাকে কতগুলো source থেকে হিসাব হয়েছে। শুধু offline list দেখা হয়ে থাকলে মনে করিয়ে দেয় যে `--profile full` আরও source যোগ করে। কোনো source না চললে score দেখানোই হয় না, কারণ "0" মানে পরিষ্কার, "জানা নেই" নয়।
+
+### আসল ও test data দিয়ে output (সংক্ষেপিত)
+
+প্রথম তিনটা আসল data থেকে: AWS-এর live list, আর MaxMind-এর official test database। শেষেরটা Phase 5-এর documentation-উদাহরণ থেকে (আসল address-এর data নয়)।
+
+```text
+$ ipfinder 3.80.1.1
+│ Verdict
+│   Connection type   Hosting / cloud: Amazon Web Services  (from published lists)
+│     evidence        cloud-ranges: Amazon Web Services us-east-1 EC2; vpn-lists: listed as a datacenter network
+
+$ ipfinder 8.8.8.8
+│   Connection type   Anycast service (Google Public DNS)  (from published lists)
+│     evidence        8.8.8.0/24 is Google Public DNS, a documented anycast service
+
+$ ipfinder 81.2.69.142          # MaxMind test database
+│   Location (consensus)   London, GB  (MaxMind radius 10 km)
+│   Location confidence    90/100 HIGH
+│     why                  only one source gave coordinates, nothing to cross-check (-10)
+
+$ ipfinder --profile full 1.2.3.4      # documentation examples, not real data
+│   Connection type        Hosting / cloud  (estimate from flags, hostnames or network type)
+│     evidence             abuseipdb: Data Center/Web Hosting/Transit
+│     other signals        mobile (ip-api: mobile)
+│   Reputation             100/100 HIGH  (from 6 source(s))
+│     why                  AbuseIPDB confidence 100/100 (x0.4) (+40); GreyNoise classifies it as
+│                          malicious (+25); VirusTotal: 3 engine(s) say malicious (5 each) (+15);
+│                          listed by Spamhaus ZEN, ThreatFox, URLhaus (+20)
+│   Exposure               48/100 MEDIUM  (from 1 source(s))
+│     why                  4 open port(s) (2 each) (+8); often-attacked services exposed: 23 Telnet,
+│                          3389 RDP (15 each) (+30); 2 possible CVE(s) (5 each) (+10)
+```
+
+JSON output-এ সবকিছু `verdict` অংশে থাকে (`connection`, `anycast`, `location`, `location_confidence`, `reputation`, `exposure`, প্রতিটার `breakdown` সহ)।
 
 ---
 
@@ -46,7 +144,7 @@
 - Listing মানে কেউ এই address থেকে কিছু দেখেছে বা report করেছে, কে করেছে তা নয়। CGNAT, VPN, cloud-এর মতো ভাগ করা address অন্যদের ইতিহাস বয়ে বেড়ায়।
 - VirusTotal-এ ১–২টা engine flag করা খুব সাধারণ ব্যাপার; কোন engine কী বলছে দেখুন।
 - OTX pulse আর AbuseIPDB report সাধারণ user-দের লেখা। IP Finder report-এর comment রাখে না, শুধু category আর তারিখ রাখে।
-- একসাথে মিলিয়ে একটা reputation score Phase 6-এ আসবে। এখন প্রতিটা source আলাদাভাবে দেখায়।
+- সব source মিলিয়ে reputation score Verdict অংশে দেখায় (Phase 6); নিচে প্রতিটা source-এর নিজের উত্তরও থাকে।
 
 ### Test data দিয়ে output (সংক্ষেপিত)
 
@@ -419,7 +517,12 @@ IP-Finder/
 │   │   ├── oui.py              # IEEE OUI vendor lookup
 │   │   ├── hostname.py         # hints from a reverse-DNS name
 │   │   ├── offline.py          # combines L1 + online-lookup decision
-│   │   └── summary.py          # map pin, local time, agreement between sources
+│   │   ├── summary.py          # per-source facts: map pin, local time, abuse contacts
+│   │   ├── geo.py              # haversine, weighted country/city vote, spread
+│   │   ├── anycast.py          # known anycast services, Cloudflare / Global Accelerator
+│   │   ├── classify.py         # connection-type decision tree with evidence
+│   │   ├── scoring.py          # location confidence, reputation, exposure (with breakdown)
+│   │   └── verdict.py          # the analysis engine: everything above in one verdict
 │   └── output/
 │       ├── terminal.py         # rich panels (no markup parsing, control characters escaped)
 │       └── json_out.py
@@ -474,7 +577,8 @@ python scripts/capture_fixtures.py 8.8.8.8 --only ip-api rdap   # IP আগে, 
 | 3 | RDAP, RIPEstat (BGP/RPKI), DNS/FCrDNS, Geofeed | ✅ (code ও test; আসল API-তে প্রথম চালানো বাকি) |
 | 4 | Tor, Private Relay, cloud range, VPN/datacenter list, InternetDB; `update-lists` | ✅ (code ও test; AWS ও X4BNet list live দিয়ে যাচাই, বাকি source আপনার computer-এ প্রথম চালানো বাকি) |
 | 5 | AbuseIPDB, GreyNoise, VirusTotal, OTX, ThreatFox, URLhaus, Spamhaus ZEN; Feodo ও Spamhaus DROP list | ✅ (code ও test; আসল API-তে প্রথম চালানো বাকি) |
-| 6–10 | Scoring, active mode, reports, dashboard | ⏳ |
+| 6 | Connection type, anycast, location consensus ও confidence, reputation ও exposure score | ✅ (প্রতিটা score-এর unit test আছে) |
+| 7–10 | Active mode, reports, dashboard, presentation | ⏳ |
 
 `ipfinder sources` চালালে প্রতিটি data source-এর phase ও API-key অবস্থা দেখা যায়।
 

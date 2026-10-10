@@ -19,6 +19,7 @@ import time
 
 from ipfinder.analysis.offline import analyze as offline_analyze
 from ipfinder.analysis.summary import build_summary
+from ipfinder.analysis.verdict import build_verdict
 from ipfinder.core.models import IPReport, ProviderResult
 from ipfinder.core.text import display_safe
 from ipfinder.core.validator import InvalidIPError, parse_ip
@@ -98,6 +99,7 @@ async def analyze(raw: str, session, providers: list[Provider] | None = None) ->
         results=results,
         notes=list(parsed.notes),
         summary=build_summary(ctx.results),
+        verdict=build_verdict(ctx.results),
     )
 
 

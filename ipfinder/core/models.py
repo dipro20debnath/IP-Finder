@@ -30,7 +30,7 @@ class IPReport:
     results: list[ProviderResult] = field(default_factory=list)
     notes: list[str] = field(default_factory=list)
     summary: dict[str, Any] = field(default_factory=dict)  # map pin, local time, agreement
-    verdict: dict[str, Any] = field(default_factory=dict)  # scores etc. (Phase 6)
+    verdict: dict[str, Any] = field(default_factory=dict)  # analysis engine (L11)
 
     def result(self, provider: str) -> ProviderResult | None:
         return next((r for r in self.results if r.provider == provider), None)
