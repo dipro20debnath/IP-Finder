@@ -200,6 +200,8 @@ Database সাপ্তাহিক update হয়, তাই এটা "স�
 
 Active mode চালু করতে `--active` flag এবং একটি স্পষ্ট confirmation prompt লাগবে (§9)।
 
+**বাস্তবায়নে যোগ হয়েছে (Phase 7):** RTT মাপা হয় TCP handshake দিয়েও, কারণ এতে privilege লাগে না আর সব OS-এ চলে। Transparent proxy ধরার জন্য প্রথমে `192.0.2.1`-এ (RFC 5737, কখনো route হয় না) canary handshake করা হয়: কেউ উত্তর দিলে TCP সময় আর TLS certificate target-এর নয় বলে ধরা হয়। এক run-এ সর্বোচ্চ ২০টা address, শুধু public address, আর port scan ইচ্ছা করে রাখা হয়নি।
+
 ### L11: Derived Intelligence
 
 - **Location Confidence Score** (0–100) এবং label: High/Medium/Low (§5.4)
@@ -635,7 +637,7 @@ python -m ipfinder update-lists                       # Tor, cloud ranges, Priva
 | **4. Anonymity + Exposure** ✅ (code ও test; AWS ও X4BNet list live দিয়ে যাচাই) | ১ সপ্তাহ | Cloud ranges, Tor, Private Relay, VPN-ASN list, InternetDB; `update-lists` | Tor exit IP সঠিকভাবে চিহ্নিত হয় |
 | **5. Threat Intel** ✅ (code ও test; আসল API-তে প্রথম চালানো বাকি) | ১ সপ্তাহ | AbuseIPDB, GreyNoise, VirusTotal, OTX, abuse.ch, Spamhaus DQS | Key না থাকলে provider "skipped (no key)" দেখায়, crash করে না |
 | **6. Analysis Engine** ✅ (প্রতিটা score-এর unit test আছে; §5.5.1-এ বাস্তবায়নের পার্থক্য) | ১ সপ্তাহ | Consensus, classification, confidence, reputation/exposure score, anycast | Score-গুলোর unit test আছে |
-| **7. Active Mode** | ৩–৪ দিন | Ping, traceroute, TLS cert, RTT plausibility; confirmation prompt | `--active` ছাড়া কখনো চলে না |
+| **7. Active Mode** ✅ (`--active` ছাড়া কখনো চলে না; test-এ যাচাই করা) | ৩–৪ দিন | Ping, traceroute, TLS cert, RTT plausibility; confirmation prompt | `--active` ছাড়া কখনো চলে না |
 | **8. Reporting** | ১ সপ্তাহ | Rich terminal, JSON, CSV, HTML + folium map, batch progress bar | HTML report browser-এ map সহ খোলে |
 | **9. (ঐচ্ছিক) Web Dashboard** | ১–২ সপ্তাহ | FastAPI backend + Leaflet frontend; একই `ipfinder` package reuse | Browser থেকে lookup |
 | **10. Docs + Presentation** | ৩ দিন | README, architecture diagram, report, viva প্রস্তুতি | Demo script প্রস্তুত |

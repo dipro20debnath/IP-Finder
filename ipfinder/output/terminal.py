@@ -139,6 +139,37 @@ def _verdict(report: IPReport) -> list[Table]:
             text += f"  ({'; '.join(detail)})"
         rows.append(("Location (consensus)", text))
 
+    check = verdict.get("rtt_check")
+    if check:
+        limit = f"{check['max_distance_km']:,.0f}"
+        bound = f"{check['rtt_ms']:g} ms round trip: at most {limit} km from you"
+        if not check.get("checked"):
+            rows.append(
+                ("Speed-of-light check", _safe(f"{bound}; not compared ({check['reason']})", "dim"))
+            )
+        elif check["plausible"]:
+            rows.append(
+                (
+                    "Speed-of-light check",
+                    _safe(
+                        f"consistent - {bound}; the location is "
+                        f"{check['distance_km']:,.0f} km away",
+                        "green",
+                    ),
+                )
+            )
+        else:
+            rows.append(
+                (
+                    "Speed-of-light check",
+                    _safe(
+                        f"IMPOSSIBLE - {bound}, but the location is {check['distance_km']:,.0f} km "
+                        f"away: {check.get('meaning', '')}",
+                        "bold red",
+                    ),
+                )
+            )
+
     confidence = verdict.get("location_confidence")
     if confidence:
         rows.append(
@@ -930,6 +961,96 @@ def _threat(report: IPReport) -> list[Table]:
     return [_section("Threat reputation", rows)]
 
 
+def _active(report: IPReport) -> list[Table]:
+    rows: list[tuple[str, object]] = []
+    rtt = _ok(report, "rtt")
+    if rtt:
+        tcp, icmp = rtt.get("tcp"), rtt.get("icmp") or {}
+        if tcp and tcp.get("error"):
+            rows.append(("TCP round trip", _safe(tcp["error"], "yellow")))
+        elif tcp:
+            rows.append(
+                (
+                    "TCP round trip",
+                    f"{tcp['min_ms']:g} ms (port {tcp['port']} {tcp['state']}, best of "
+                    f"{len(tcp['samples_ms'])})",
+                )
+            )
+        if "min_ms" in icmp:
+            rows.append(
+                ("Ping", f"{icmp['min_ms']:g} ms ({icmp['received']} of {icmp['sent']} replies)")
+            )
+        elif icmp.get("error"):
+            rows.append(("Ping", _safe(icmp["error"], "dim")))
+        vantage = rtt.get("vantage") or {}
+        if "latitude" in vantage:
+            place = ", ".join(v for v in (vantage.get("city"), vantage.get("country_code")) if v)
+            place = place or f"{vantage['latitude']}, {vantage['longitude']}"
+            source = f"from {vantage['source']}, +-{vantage['uncertainty_km']} km"
+            rows.append(("Your location", _safe(f"{place} ({source})", "dim")))
+        elif vantage.get("error"):
+            rows.append(("Your location", _safe(vantage["error"], "dim")))
+    tables = [_section("Active probes (packets sent to the target)", rows)] if rows else []
+
+    trace = _ok(report, "traceroute")
+    if trace:
+        grid = _grid(
+            f"Path ({trace['tool']}, "
+            f"{'reached' if trace.get('reached') else 'did not reach'} the target)",
+            ["Hop", "Address", "RTT", "Network"],
+        )
+        for hop in trace.get("hops", []):
+            network = hop.get("network")
+            if hop.get("asn") is not None:
+                network = (
+                    f"AS{hop['asn']} {hop.get('prefix', '')} {hop.get('country_code', '')}".strip()
+                )
+            grid.add_row(
+                _cell(hop["hop"]),
+                _cell(hop.get("ip") or "*"),
+                _cell(f"{hop['rtt_ms']:g} ms" if hop.get("rtt_ms") is not None else None),
+                _cell(network),
+            )
+        tables.append(grid)
+
+    cert = _ok(report, "tls-cert")
+    if cert:
+        subject = cert.get("subject") or {}
+        issuer = cert.get("issuer") or {}
+        names = cert.get("dns_names") or []
+        shown = ", ".join(names[:8]) + (f" (+{len(names) - 8} more)" if len(names) > 8 else "")
+        if cert.get("trusted") is True:
+            trust = _safe("yes - your system trusts the issuing CA", "green")
+        elif cert.get("trusted") is False:
+            trust = _safe(f"no - {cert.get('trust_error', 'not trusted')}", "yellow")
+        else:
+            trust = _safe("unknown", "dim")
+        tables.append(
+            _section(
+                f"TLS certificate (port {cert.get('port', 443)})",
+                [
+                    ("Subject", subject.get("CN") or ", ".join(subject.values()) or None),
+                    ("Names (SAN)", shown or None),
+                    ("IP addresses (SAN)", ", ".join(cert.get("ip_addresses") or []) or None),
+                    (
+                        "Issuer",
+                        " / ".join(v for v in (issuer.get("O"), issuer.get("CN")) if v) or None,
+                    ),
+                    (
+                        "Valid",
+                        f"{cert.get('not_before', '?')[:10]} to {cert.get('not_after', '?')[:10]}",
+                    ),
+                    ("Self-signed", _yes_no(cert.get("self_signed"))),
+                    ("Trusted", trust),
+                    ("Protocol", f"{cert.get('tls_version')} ({cert.get('cipher')})"),
+                    ("SHA-256", cert.get("sha256")),
+                    ("Certificate logs", cert.get("crt_sh")),
+                ],
+            )
+        )
+    return tables
+
+
 def _flags(report: IPReport) -> list[Table]:
     data = _ok(report, "ip-api")
     if not data:
@@ -974,6 +1095,7 @@ def render_report(report: IPReport, verbose: bool = False) -> Panel:
     parts += _location(report) + _network(report) + _routing(report)
     parts += _registration(report) + _abuse(report) + _reverse_dns(report)
     parts += _anonymity(report) + _flags(report) + _exposure(report) + _threat(report)
+    parts += _active(report)
     parts.append(_representations(data))
     parts += _ipv4(data) if report.version == 4 else _ipv6(data)
     parts += _sources(report)

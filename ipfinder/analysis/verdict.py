@@ -6,6 +6,7 @@
   location_confidence  0-100, with the rules applied (scoring.py)
   reputation           0-100 from the threat sources that ran (scoring.py)
   exposure             0-100 from Shodan InternetDB (scoring.py)
+  rtt_check            speed-of-light check of the location, with --active (rtt.py)
 Addresses that are not globally reachable get only a connection label: no online
 source applies to them.
 """
@@ -15,6 +16,7 @@ from __future__ import annotations
 from ipfinder.analysis.anycast import detect_anycast
 from ipfinder.analysis.classify import classify_connection
 from ipfinder.analysis.geo import location_consensus
+from ipfinder.analysis.rtt import rtt_check
 from ipfinder.analysis.scoring import exposure_score, location_confidence, reputation_score
 
 
@@ -38,10 +40,20 @@ def build_verdict(results: dict) -> dict:
     connection = classify_connection(results, anycast)
     verdict: dict = {"connection": connection, "anycast": anycast}
     consensus = location_consensus(results)
+    rtt = results.get("rtt")
+    check = rtt_check(rtt.data if rtt is not None and rtt.ok else None, consensus)
+    violation = bool(check and check.get("checked") and not check["plausible"])
+    if check:
+        if violation:
+            check["meaning"] = (
+                "the claimed location is physically impossible: the geolocation is wrong"
+                + (" (anycast)" if anycast.get("anycast") else ", or the address is anycast")
+            )
+        verdict["rtt_check"] = check
     if consensus is not None:
         verdict["location"] = consensus
         verdict["location_confidence"] = location_confidence(
-            consensus, connection, anycast, results
+            consensus, connection, anycast, results, rtt_violation=violation
         )
     reputation = reputation_score(results)
     if reputation is not None:

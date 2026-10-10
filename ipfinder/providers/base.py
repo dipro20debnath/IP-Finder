@@ -38,6 +38,7 @@ class Provider(ABC):
     active: bool = False  # sends packets to the target; runs only in --active mode
     cache_ttl: int = 0  # seconds; 0 = never cache
     rate_limit: tuple[int, float] | None = None  # (calls, per seconds), client-side
+    timeout: float | None = None  # seconds; None = the run's --timeout (config.timeout)
 
     def required_files(self, config: Config) -> list[Path]:
         """Local files this provider needs; it is skipped if none of them exist."""

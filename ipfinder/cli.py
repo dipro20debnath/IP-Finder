@@ -4,6 +4,7 @@
     ipfinder lookup 8.8.8.8 -f json -o report.json
     cat ips.txt | ipfinder lookup -f json
     ipfinder lookup 8.8.8.8 --profile quick --no-cache
+    ipfinder lookup 8.8.8.8 --active   (ping, traceroute, TLS certificate; asks first)
     ipfinder me            (your own public IP)
     ipfinder sources
     ipfinder update-lists  (Tor, cloud, Private Relay, VPN lists; GeoLite2 with a key)
@@ -17,7 +18,8 @@ Reports go to stdout; prompts, status lines and errors go to stderr, so
 
 Exit codes: 0 success, 1 at least one input was not a valid IP (or "me" could
 not find your public IP, or a list download failed),
-2 usage error (bad option, unreadable input file, unwritable output file),
+2 usage error (bad option, unreadable input file, unwritable output file, active
+mode not confirmed),
 3 internal error, 130 interrupted (Ctrl+C).
 """
 
@@ -83,6 +85,17 @@ def _build_parser() -> argparse.ArgumentParser:
     )
     output.add_argument(
         "--no-cache", action="store_true", help="do not read or write data/cache.sqlite"
+    )
+    output.add_argument(
+        "--active",
+        action="store_true",
+        help="also send packets to the target (TCP/ping round trip, traceroute, TLS "
+        "certificate); asks for confirmation; only for systems you may test",
+    )
+    output.add_argument(
+        "--authorized",
+        action="store_true",
+        help="with --active: confirm in advance (for scripts) that you may test the targets",
     )
 
     lookup = sub.add_parser("lookup", parents=[output], help="analyse one or more IP addresses")
@@ -176,7 +189,54 @@ def _stdout_is_utf8() -> bool:
 
 
 def _config(args) -> Config:
-    return Config.load(profile=args.profile, use_cache=not args.no_cache)
+    return Config.load(
+        profile=args.profile, use_cache=not args.no_cache, active_mode=args.active or None
+    )
+
+
+ACTIVE_LIMIT = 20  # active probing is for checking a few systems, not for sweeps
+CONFIRMATION = "I AM AUTHORIZED"
+
+
+def _confirm_active(args, count: int, messages: Console) -> bool:
+    """Ask before any packet is sent to a target (ADVANCED_PLAN.md section 9.1)."""
+    if count > ACTIVE_LIMIT:
+        messages.print(
+            Text(
+                f"[!] --active probes at most {ACTIVE_LIMIT} addresses per run "
+                f"({count} given). Nothing was sent.",
+                style="red",
+            )
+        )
+        return False
+    messages.print(
+        Text(
+            "[!] Active mode sends packets directly to the target "
+            "(TCP handshakes on ports 443/80, ping, traceroute, a TLS handshake).\n"
+            "    Only scan systems you own or have written permission to test.",
+            style="yellow",
+        )
+    )
+    if args.authorized:
+        messages.print(Text("    --authorized given: continuing.", style="yellow"))
+        return True
+    if sys.stdin is None or not sys.stdin.isatty():
+        messages.print(
+            Text(
+                "[!] Cannot ask for confirmation because input is not a terminal; add "
+                "--authorized if you may test these systems. Nothing was sent.",
+                style="red",
+            )
+        )
+        return False
+    try:
+        answer = _prompt(f"    Type '{CONFIRMATION}' to continue: ")
+    except EOFError:
+        answer = ""
+    if answer != CONFIRMATION:
+        messages.print(Text("[!] Not confirmed. Nothing was sent.", style="red"))
+        return False
+    return True
 
 
 async def _lookup_all(inputs: list[str], config: Config):
@@ -202,6 +262,8 @@ def _cmd_lookup(args, console: Console, messages: Console) -> int:
     except EOFError:
         messages.print(Text("[!] No IP address given.", style="red"))
         return EXIT_USAGE
+    if args.active and not _confirm_active(args, len(inputs), messages):
+        return EXIT_USAGE
 
     reports, errors, warning = asyncio.run(_lookup_all(inputs, _config(args)))
     if warning:
@@ -210,6 +272,8 @@ def _cmd_lookup(args, console: Console, messages: Console) -> int:
 
 
 def _cmd_me(args, console: Console, messages: Console) -> int:
+    if args.active and not _confirm_active(args, 1, messages):
+        return EXIT_USAGE
     try:
         reports, errors, warning = asyncio.run(_lookup_me(_config(args)))
     except ProviderError as exc:
@@ -286,6 +350,8 @@ def _cmd_sources(console: Console) -> int:
             needs = "GeoLite2 .mmdb files"
         elif isinstance(p, ListProvider):
             needs = "ipfinder update-lists"
+        elif p.active:
+            needs = "--active (authorised targets only)"
         else:
             needs = "-"
         table.add_row(p.name, p.layer, ", ".join(p.profiles), status, needs)

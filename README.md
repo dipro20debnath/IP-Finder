@@ -1,10 +1,64 @@
-# IP Finder v2 (Phase 0–6)
+# IP Finder v2 (Phase 0–7)
 
 একটি IP address থেকে **আইনসঙ্গতভাবে যা যা জানা সম্ভব**, তা ধাপে ধাপে বের করার Python tool। পুরো roadmap: [ADVANCED_PLAN.md](ADVANCED_PLAN.md)।
 
-এই version-এ আছে **Phase 0 (setup)**, **Phase 1 (offline analysis)**, **Phase 2 (location ও network: ip-api, IPinfo Lite, MaxMind GeoLite2, Team Cymru, PeeringDB)**, **Phase 3 (registry, routing ও DNS: RDAP, RIPEstat BGP/RPKI, reverse DNS + FCrDNS, Geofeed)**, **Phase 4 (anonymity ও exposure: Tor exit, iCloud Private Relay, cloud/CDN range, VPN/datacenter list, Shodan InternetDB; `update-lists`)** **Phase 5 (threat intelligence: AbuseIPDB, GreyNoise, VirusTotal, OTX, ThreatFox, URLhaus, Spamhaus; Feodo Tracker ও Spamhaus DROP list)** আর **Phase 6 (analysis engine: connection type, anycast, location consensus ও confidence, reputation ও exposure score)**। কোনো API key ছাড়াই চলে; key বা database যোগ করলে আরও source যুক্ত হয়। Active probing (ping, traceroute) আসবে Phase 7-এ, শুধু `--active` দিলে।
+এই version-এ আছে:
+
+- **Phase 0:** setup, CI, আসল API response রেকর্ড করার script
+- **Phase 1:** offline analysis
+- **Phase 2:** location ও network (ip-api, IPinfo Lite, MaxMind GeoLite2, Team Cymru, PeeringDB)
+- **Phase 3:** registry, routing ও DNS (RDAP, RIPEstat BGP/RPKI, reverse DNS + FCrDNS, Geofeed)
+- **Phase 4:** anonymity ও exposure (Tor exit, iCloud Private Relay, cloud/CDN range, VPN/datacenter list, Shodan InternetDB; `update-lists`)
+- **Phase 5:** threat intelligence (AbuseIPDB, GreyNoise, VirusTotal, OTX, ThreatFox, URLhaus, Spamhaus; Feodo Tracker ও Spamhaus DROP list)
+- **Phase 6:** analysis engine (connection type, anycast, location consensus ও confidence, reputation ও exposure score)
+- **Phase 7:** active mode (RTT, traceroute, TLS certificate, speed-of-light check), শুধু `--active` আর confirmation-এর পরে
+
+কোনো API key ছাড়াই চলে; key বা database যোগ করলে আরও source যুক্ত হয়।
 
 > ⚠️ IP geolocation আনুমানিক। একটি IP address কোনো ব্যক্তিকে শনাক্ত করে না।
+
+---
+
+## Phase 7: active mode (শুধু অনুমতি থাকলে)
+
+এতক্ষণের সবকিছু passive: তৃতীয় পক্ষের database দেখা হয়, target কিছু টের পায় না। `--active` দিলে IP Finder সরাসরি target-এ packet পাঠায়। তাই এটা চলে শুধু নিচের সব শর্ত মিললে:
+
+1. `--active` দেওয়া হয়েছে। এটা ছাড়া active provider-গুলো "active probing is off" বলে skip হয়; test-এ যাচাই করা হয়েছে যে তখন কোনো probe চলে না।
+2. Plan-এর §9.1-এর সতর্কবার্তা দেখানো হয়, আর আপনাকে হুবহু `I AM AUTHORIZED` লিখতে হয়। Script-এ (terminal ছাড়া) আগে থেকে `--authorized` দিতে হয়, নাহলে কিছুই পাঠানো হয় না (exit code 2)।
+3. এক run-এ সর্বোচ্চ ২০টা address। এটা কয়েকটা system যাচাই করার জন্য, পুরো network sweep করার জন্য নয়।
+4. শুধু public address। LAN-এর (private) address-এ probe যায় না।
+
+| Probe | কী পাঠায় | কী জানায় |
+|---|---|---|
+| **RTT** | Port 443-এ (না পেলে 80-তে) ৪টা TCP handshake, আর system-এর `ping` দিয়ে ৪টা ICMP echo | সবচেয়ে কম round-trip time। Port বন্ধ থাকলেও (RST) সময় মাপা যায়। Windows-এ বন্ধ port-এর সময় বাদ দেওয়া হয়, কারণ Windows প্রায় এক সেকেন্ড ধরে আবার চেষ্টা করে |
+| **Traceroute** | System-এর `traceroute` / `tracert` / `tracepath`, সর্বোচ্চ ৩০ hop | পথের প্রতিটা router, তার network (ASN, prefix, registry-র দেশ; Team Cymru থেকে) |
+| **TLS certificate** | Port 443-এ একটা TLS handshake (দ্বিতীয়টা trust যাচাইয়ের জন্য) | Certificate-এ কোন কোন domain আছে (SAN), issuer, মেয়াদ, self-signed কিনা, আপনার system বিশ্বাস করে কিনা, SHA-256 আর crt.sh link |
+
+Port scan **ইচ্ছা করে রাখা হয়নি**: plan অনুযায়ী এটা শুধু লিখিত অনুমতিতে চলে, আর খোলা port Shodan InternetDB থেকে passively পাওয়া যায়। Certificate পড়তে IP Finder-এর নিজের ছোট X.509 reader আছে, কোনো নতুন dependency লাগেনি। Container-এর 128টা CA certificate-এ এটা CPython-এর নিজের decoder-এর সাথে হুবহু মিলেছে।
+
+**Speed-of-light check (plan-এর §5.6):** Fibre-এ আলো প্রতি millisecond-এ প্রায় 200 km যায়। তাই R ms round trip মানে address-টা আপনার থেকে **সর্বোচ্চ R/2 × 200 km** দূরে। Source-রা যে location বলছে সেটা এর চেয়ে দূরে হলে geolocation ভুল, নয়তো address-টা anycast। তখন location confidence থেকে −30 কাটা হয়। এর জন্য আপনার নিজের অবস্থান লাগে:
+- `.env`-এ `IPFINDER_LOCATION=23.8103,90.4125` দিলে সেটা ব্যবহার হয় (±10 km)।
+- না দিলে আপনার public IP-এর location ip-api থেকে নেওয়া হয় (±100 km)।
+
+**Transparent proxy ধরা (আসল অভিজ্ঞতা থেকে):** এই project যে environment-এ বানানো হয়েছে, সেখানে একটা egress gateway সব port-443 connection নিজেই গ্রহণ করে। এমনকি `203.0.113.77`-এর মতো address-এও, যার internet-এ কোনো অস্তিত্বই নেই। তারপর নিজের certificate দেখায় ("Egress Gateway SDS Issuing CA")। কোনো যাচাই না থাকলে IP Finder 0.5 ms RTT আর একটা ভুয়া certificate-কে target-এর বলে দেখাত। Corporate firewall, antivirus-এর HTTPS scanning, captive portal-ও এই একই কাজ করে। তাই TCP বা TLS ফল বিশ্বাস করার আগে IP Finder `192.0.2.1`-এ (RFC 5737-এর documentation address, internet-এ কখনো route হয় না) একটা handshake চেষ্টা করে। কেউ উত্তর দিলে বোঝা যায় পথে কেউ সবার হয়ে উত্তর দিচ্ছে। তখন TCP সময় বাদ দেওয়া হয় (ping থাকলে শুধু ping ব্যবহার হয়), আর certificate দেখানোর বদলে বলা হয় যে সেটা proxy-র।
+
+### আসল output: interception আছে এমন network থেকে
+
+```text
+$ ipfinder --active --authorized 8.8.8.8
+[!] Active mode sends packets directly to the target (TCP handshakes on ports 443/80, ping, traceroute, a TLS handshake).
+    Only scan systems you own or have written permission to test.
+    --authorized given: continuing.
+│   rtt (L10)          error: a proxy or firewall on your network answers TCP port 443 itself (it even
+│                      answers for 192.0.2.1, an address that cannot exist); ping: the ping command is
+│                      not installed; so the round trip cannot be measured
+│   traceroute (L10)   error: traceroute / tracepath is not installed
+│   tls-cert (L10)     error: a proxy or firewall on your network answers TCP port 443 itself (it even
+│                      answers for 192.0.2.1, an address that cannot exist), so any certificate would
+│                      be the proxy's, not the target's
+```
+
+সাধারণ বাড়ি বা অফিসের network থেকে ping, traceroute আর certificate ঠিকভাবে আসবে। Local TCP server আর test certificate দিয়ে চালানো TLS server-এর বিরুদ্ধে প্রতিটা probe test করা হয়েছে। Ping আর traceroute-এর parser test করা হয়েছে Linux, macOS ও Windows-এর (জার্মান ভাষার Windows সহ) output-এর format মেনে লেখা sample দিয়ে। এই environment-এ ping বা traceroute নেই, তাই আসল output দিয়ে প্রথমবার চালানো হবে আপনার computer-এ।
 
 ---
 
@@ -399,6 +453,8 @@ ipfinder lookup -i ips.txt -f json        # file থেকে (প্রতি �
 cat ips.txt | ipfinder lookup -f json     # stdin থেকে
 ipfinder lookup --profile quick 8.8.8.8   # শুধু offline + ip-api (দ্রুত)
 ipfinder lookup --profile full 8.8.8.8    # + threat intelligence (key লাগে, address তৃতীয় পক্ষে যায়)
+ipfinder lookup --active 8.8.8.8          # + RTT, traceroute, TLS certificate (অনুমতি নিয়ে)
+ipfinder lookup --active --authorized -i mine.txt   # script-এ: আগে থেকে অনুমতি নিশ্চিত
 ipfinder lookup --no-cache 8.8.8.8        # cache না পড়ে, না লিখে
 ipfinder me                               # নিজের public IP
 ipfinder sources                          # প্রতিটা source প্রস্তুত কি না, কী লাগবে
@@ -465,7 +521,7 @@ $ ipfinder fe80::21a:2bff:fe3c:4d5e%eth0
 ```text
 IP-Finder/
 ├── ipfinder/
-│   ├── cli.py                  # argparse CLI (lookup, me, sources, cache, update-lists)
+│   ├── cli.py                  # argparse CLI (lookup, me, sources, cache, update-lists; --active gate)
 │   ├── core/
 │   │   ├── validator.py        # input → validated address, helpful errors
 │   │   ├── text.py             # version-independent IPv6 text, safe display of input
@@ -504,8 +560,12 @@ IP-Finder/
 │   │   ├── abusech.py          # ThreatFox + URLhaus (Auth-Key)
 │   │   ├── spamhaus.py         # Spamhaus ZEN over DNS (RFC 5782 test entry first)
 │   │   ├── threat_lists.py     # Feodo Tracker + Spamhaus DROP (offline)
+│   │   ├── active.py           # --active only: rtt, traceroute, tls-cert (stage 3)
 │   │   ├── common.py           # shared normalisation helpers
 │   │   └── __init__.py         # registry + planned providers (Phase 7)
+│   ├── active/
+│   │   ├── probes.py           # TCP round trip, ping, traceroute, TLS grab, proxy check
+│   │   └── x509.py             # small DER reader for certificates (no dependency)
 │   ├── lists/
 │   │   ├── specs.py            # every downloadable list: URL, format, parser, freshness
 │   │   ├── index.py            # longest-prefix lookup (300k prefixes load in ~1-1.5 s, lookups in microseconds)
@@ -522,6 +582,7 @@ IP-Finder/
 │   │   ├── anycast.py          # known anycast services, Cloudflare / Global Accelerator
 │   │   ├── classify.py         # connection-type decision tree with evidence
 │   │   ├── scoring.py          # location confidence, reputation, exposure (with breakdown)
+│   │   ├── rtt.py              # speed-of-light check (200 km per ms in fibre)
 │   │   └── verdict.py          # the analysis engine: everything above in one verdict
 │   └── output/
 │       ├── terminal.py         # rich panels (no markup parsing, control characters escaped)
@@ -578,7 +639,8 @@ python scripts/capture_fixtures.py 8.8.8.8 --only ip-api rdap   # IP আগে, 
 | 4 | Tor, Private Relay, cloud range, VPN/datacenter list, InternetDB; `update-lists` | ✅ (code ও test; AWS ও X4BNet list live দিয়ে যাচাই, বাকি source আপনার computer-এ প্রথম চালানো বাকি) |
 | 5 | AbuseIPDB, GreyNoise, VirusTotal, OTX, ThreatFox, URLhaus, Spamhaus ZEN; Feodo ও Spamhaus DROP list | ✅ (code ও test; আসল API-তে প্রথম চালানো বাকি) |
 | 6 | Connection type, anycast, location consensus ও confidence, reputation ও exposure score | ✅ (প্রতিটা score-এর unit test আছে) |
-| 7–10 | Active mode, reports, dashboard, presentation | ⏳ |
+| 7 | `--active`: RTT (TCP + ping), traceroute, TLS certificate, speed-of-light check, confirmation, proxy detection | ✅ (`--active` ছাড়া কখনো চলে না, test-এ যাচাই করা) |
+| 8–10 | Reports (CSV, HTML map), dashboard, presentation | ⏳ |
 
 `ipfinder sources` চালালে প্রতিটি data source-এর phase ও API-key অবস্থা দেখা যায়।
 
@@ -587,5 +649,5 @@ python scripts/capture_fixtures.py 8.8.8.8 --only ip-api rdap   # IP আগে, 
 ## দায়িত্বশীল ব্যবহার
 
 - Phase 1 পুরোপুরি passive ও offline। কোনো packet কোথাও পাঠায় না।
-- Active probing (Phase 7) default-এ বন্ধ থাকবে এবং শুধু নিজের বা লিখিত অনুমতিপ্রাপ্ত system-এ চালানো যাবে।
+- Active probing (Phase 7) default-এ বন্ধ। `--active` দিলেও স্পষ্ট confirmation (`I AM AUTHORIZED`) ছাড়া চলে না, এক run-এ সর্বোচ্চ ২০টা address, শুধু public address, আর port scan নেই। শুধু নিজের বা লিখিত অনুমতিপ্রাপ্ত system-এ চালান।
 - বাংলাদেশে সাইবার সুরক্ষা অধ্যাদেশ, ২০২৫ প্রযোজ্য; বিস্তারিত [ADVANCED_PLAN.md §9](ADVANCED_PLAN.md#9-security-ethics-ও-আইন)।

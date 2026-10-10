@@ -112,6 +112,7 @@ class Config:
     maxmind_city_db: Path = Path("data/GeoLite2-City.mmdb")
     maxmind_asn_db: Path = Path("data/GeoLite2-ASN.mmdb")
     lists_dir: Path = Path("data/lists")  # Tor, cloud, Private Relay, VPN lists
+    my_location: str | None = None  # "lat,lon" of this computer, for the RTT check
     api_keys: Mapping[str, str] = field(default_factory=dict)
 
     @classmethod
@@ -131,6 +132,8 @@ class Config:
         for env_name, attr in _PATH_SETTINGS.items():
             if merged.get(env_name):
                 settings[attr] = Path(merged[env_name])
+        if merged.get("IPFINDER_LOCATION"):
+            settings["my_location"] = merged["IPFINDER_LOCATION"]
         settings.update({k: v for k, v in overrides.items() if v is not None})
         config = cls(**settings)
         if config.profile not in PROFILES:

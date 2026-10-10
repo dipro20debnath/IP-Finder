@@ -8,6 +8,8 @@ Order:
      Team Cymru, RDAP, RIPEstat, reverse DNS)
   4. stage 2 - sources that need stage-1 data (PeeringDB needs the ASN, Geofeed
      needs the URL from RDAP)
+  5. stage 3 - active probes (only with --active), after the passive lookups so
+     their traffic does not distort the round-trip times
 A provider that fails never stops the others. Results come from the cache when
 fresh, and every network call passes the provider's rate limiter first.
 """
@@ -49,12 +51,13 @@ async def _run(provider: Provider, ctx: LookupContext) -> ProviderResult:
     except Exception as exc:  # a bug in one provider must not sink the whole report
         return ProviderResult(**base, ok=False, error=f"unexpected {type(exc).__name__}: {exc}")
 
+    timeout = provider.timeout or ctx.config.timeout
     start = time.perf_counter()
     try:
-        data = await asyncio.wait_for(provider.lookup(ctx), timeout=ctx.config.timeout)
+        data = await asyncio.wait_for(provider.lookup(ctx), timeout=timeout)
         ok, error = True, None
     except asyncio.TimeoutError:
-        data, ok, error = {}, False, f"timed out after {ctx.config.timeout:g}s"
+        data, ok, error = {}, False, f"timed out after {timeout:g}s"
     except ProviderError as exc:
         data, ok, error = {}, False, str(exc)
     except Exception as exc:  # a bug in one provider must not sink the whole report

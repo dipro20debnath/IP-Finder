@@ -12,6 +12,7 @@ from dataclasses import dataclass
 
 from ipfinder.providers.abusech import ThreatFoxProvider, URLhausProvider
 from ipfinder.providers.abuseipdb import AbuseIPDBProvider
+from ipfinder.providers.active import RTTProvider, TLSCertProvider, TracerouteProvider
 from ipfinder.providers.base import Provider
 from ipfinder.providers.cloud_ranges import CloudRangesProvider
 from ipfinder.providers.cymru import TeamCymruProvider
@@ -70,9 +71,10 @@ def default_providers() -> list[Provider]:
         GeofeedProvider(),
         VPNListsProvider(),
         SpamhausDropProvider(),
+        RTTProvider(),
+        TracerouteProvider(),
+        TLSCertProvider(),
     ]
 
 
-PLANNED_PROVIDERS = (
-    PlannedProvider("active", "L10", 7, None, "Ping, traceroute, TLS cert (opt-in only)"),
-)
+PLANNED_PROVIDERS: tuple[PlannedProvider, ...] = ()

@@ -134,7 +134,7 @@ def test_sources(capsys, monkeypatch):
     assert "database not found" in lines["maxmind"]
     assert "no API key (ABUSEIPDB_API_KEY in .env)" in lines["abuseipdb"]
     assert "GREYNOISE_API_KEY (optional)" in lines["greynoise"]
-    assert "planned (Phase 7)" in lines["active"]
+    assert "active probing is off" in lines["rtt"] and "--active" in lines["traceroute"]
 
 
 def test_version(capsys):
