@@ -1,4 +1,4 @@
-# IP Finder v2 (Phase 0–9)
+# IP Finder v2 (Phase 0–10)
 
 একটি IP address থেকে **আইনসঙ্গতভাবে যা যা জানা সম্ভব**, তা ধাপে ধাপে বের করার Python tool। পুরো roadmap: [ADVANCED_PLAN.md](ADVANCED_PLAN.md)।
 
@@ -14,10 +14,69 @@
 - **Phase 7:** active mode (RTT, traceroute, TLS certificate, speed-of-light check), শুধু `--active` আর confirmation-এর পরে
 - **Phase 8:** reporting (CSV, offline map সহ HTML report, `batch` command, progress bar)
 - **Phase 9:** browser থেকে lookup করার web dashboard (`ipfinder serve`; ঐচ্ছিক)
+- **Phase 10:** architecture, project report, demo script, viva প্রস্তুতি; `--offline` mode
 
 কোনো API key ছাড়াই চলে; key বা database যোগ করলে আরও source যুক্ত হয়।
 
 > ⚠️ IP geolocation আনুমানিক। একটি IP address কোনো ব্যক্তিকে শনাক্ত করে না।
+
+## দ্রুত শুরু
+
+```bash
+git clone https://github.com/dipro20debnath/IP-Finder.git && cd IP-Finder
+python -m venv .venv && source .venv/bin/activate     # Windows: .venv\Scripts\activate
+python -m pip install -e ".[dev]"
+
+ipfinder 8.8.8.8                       # সব স্তর, সব source
+ipfinder --offline 100.64.1.1          # কিছুই বাইরে যায় না
+ipfinder lookup 8.8.8.8 1.1.1.1 -f html -o report.html
+ipfinder serve --open                  # browser-এ dashboard
+python scripts/demo.py --offline       # পুরো demo, internet ছাড়া
+```
+
+## Documentation
+
+| Document | কী আছে |
+|---|---|
+| [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) | Diagram, একটা lookup-এর যাত্রা, provider-এর contract, কোন mode-এ address কে দেখে |
+| [docs/REPORT.md](docs/REPORT.md) | Project report: লক্ষ্য, design, algorithm, testing, ফল, সীমাবদ্ধতা, তথ্যসূত্র |
+| [docs/DEMO.md](docs/DEMO.md) | ১০ মিনিটের demo: প্রতিটা step-এ কী চালাবেন, কী বলবেন; online ও offline পথ |
+| [docs/VIVA.md](docs/VIVA.md) | Viva-র ৩৫টা প্রশ্ন ও উত্তর, প্রতিটা উত্তরের code কোথায় |
+| [ADVANCED_PLAN.md](ADVANCED_PLAN.md) | পুরো plan, source-এর যাচাই, roadmap |
+
+![IP Finder architecture](docs/architecture.svg)
+
+নিচের অংশগুলো phase অনুযায়ী, সবচেয়ে নতুনটা আগে।
+
+---
+
+## Phase 10: docs, demo ও offline mode
+
+**Documentation:** উপরের চারটা document আর architecture diagram (`docs/architecture.svg`, হাতে লেখা SVG, তাই GitHub-এ আর slide-এ একইভাবে দেখায়)। Report আর viva-র প্রতিটা সংখ্যা ও দাবি code, test বা এই repo-তে চালানো output থেকে নেওয়া। যা এখনও আসল service দিয়ে যাচাই হয়নি, সেটা আলাদা করে লেখা আছে (REPORT §৭)।
+
+**`--offline` mode:** শুধু এই computer-এর source চলে: address-এর নিজের বিশ্লেষণ, GeoLite2 file, আর `update-lists` দিয়ে আগে নামানো list। বাকিরা "offline mode" বলে skip হয়। Test-এ fake network দিয়ে গোনা হয়েছে যে তখন একটাও HTTP request বা DNS query যায় না। দুটো কাজে লাগে:
+- Privacy: আপনি কোন address দেখছেন, কেউ জানতে পারে না।
+- Demo: Wi-Fi না থাকলেও চলে।
+
+```bash
+ipfinder --offline 8.8.8.8          # anycast চেনা যায় নিজস্ব table থেকে
+ipfinder serve --offline            # dashboard-ও
+```
+
+`--offline`-এর সাথে `--active` দেওয়া যায় না (active মানেই target-এ packet)। `me`-ও চলে না, কারণ নিজের address জানতে ip-api লাগে।
+
+**Demo script:** `scripts/demo.py` ১১টা step-এ পুরো tool দেখায়। প্রতিটা step-এ title, কী দেখাতে হবে আর command দেখায়, তারপর Enter চাপলে চালায়।
+
+```bash
+python scripts/demo.py --check            # demo-র জন্য সব প্রস্তুত কিনা
+python scripts/demo.py                    # online (প্রায় ১০ মিনিট)
+python scripts/demo.py --offline          # internet ছাড়া, MaxMind-এর test database দিয়ে
+python scripts/demo.py --offline --yes --no-browser   # না থেমে রিহার্সাল
+```
+
+পুরো offline demo একটা test-এর অংশ (`tests/test_demo.py`)। সেখানে একটা অচল proxy দিয়ে চালানো হয়, যাতে কোনো network চেষ্টা হলে ধরা পড়ে। কী বলবেন আর কী দেখাবেন: [docs/DEMO.md](docs/DEMO.md)।
+
+**Demo বানাতে গিয়ে পাওয়া bug ঠিক করা হয়েছে:** `ipfinder --no-color lookup 8.8.8.8`-এর মতো command-এ option আগে দিলে "lookup" শব্দটাকেই IP হিসেবে ধরা হচ্ছিল। এখন command option-এর পরে এলেও চেনা যায়। `-f json`-এর মতো option-এর value কখনো command হিসেবে ধরা হয় না।
 
 ---
 
@@ -576,6 +635,7 @@ ipfinder lookup --profile full 8.8.8.8    # + threat intelligence (key লাগ
 ipfinder lookup --active 8.8.8.8          # + RTT, traceroute, TLS certificate (অনুমতি নিয়ে)
 ipfinder lookup --active --authorized -i mine.txt   # script-এ: আগে থেকে অনুমতি নিশ্চিত
 ipfinder lookup --no-cache 8.8.8.8        # cache না পড়ে, না লিখে
+ipfinder --offline 8.8.8.8                # শুধু local source; কিছুই বাইরে যায় না
 ipfinder me                               # নিজের public IP
 ipfinder sources                          # প্রতিটা source প্রস্তুত কি না, কী লাগবে
 ipfinder update-lists                     # Tor, cloud, Private Relay, VPN list (+ GeoLite2)
@@ -719,8 +779,9 @@ IP-Finder/
 │   ├── capture_fixtures.py     # Phase 0: record real API responses for tests
 │   ├── build_world_map.py      # Phase 8: rebuild assets/world-110m.json from Natural Earth
 │   ├── check_html_report.py    # Phase 8: open a report in Chromium (Playwright) and check the map
-│   └── check_dashboard.py      # Phase 9: start the dashboard and use it in Chromium
-├── docs/                       # screenshots of the HTML report and the dashboard
+│   ├── check_dashboard.py      # Phase 9: start the dashboard and use it in Chromium
+│   └── demo.py                 # Phase 10: the guided demo (online or --offline)
+├── docs/                       # architecture, report, demo, viva; screenshots
 ├── tests/                      # pytest; runs offline (fake HTTP + DNS)
 │   └── data/maxmind/           # MaxMind's official test databases (MIT licence)
 ├── data/                       # downloaded databases + cache (git-ignored)
@@ -775,7 +836,7 @@ python scripts/capture_fixtures.py 8.8.8.8 --only ip-api rdap   # IP আগে, 
 | 7 | `--active`: RTT (TCP + ping), traceroute, TLS certificate, speed-of-light check, confirmation, proxy detection | ✅ (`--active` ছাড়া কখনো চলে না, test-এ যাচাই করা) |
 | 8 | CSV, offline map সহ HTML report, `batch` command, progress bar | ✅ (HTML report আসল Chromium-এ disk থেকে খুলে map আঁকা ও শূন্য network request যাচাই করা) |
 | 9 | (ঐচ্ছিক) web dashboard: FastAPI + Leaflet, `ipfinder serve` | ✅ (আসল Chromium-এ browser থেকে lookup, map ও download যাচাই করা) |
-| 10 | Docs ও presentation | ⏳ |
+| 10 | Architecture, report, demo script, viva প্রস্তুতি; `--offline` mode | ✅ (পুরো offline demo test-এ শুরু থেকে শেষ পর্যন্ত চলে) |
 
 `ipfinder sources` চালালে প্রতিটি data source-এর phase ও API-key অবস্থা দেখা যায়।
 
@@ -786,5 +847,6 @@ python scripts/capture_fixtures.py 8.8.8.8 --only ip-api rdap   # IP আগে, 
 - Phase 1 পুরোপুরি passive ও offline। কোনো packet কোথাও পাঠায় না।
 - HTML report খুললে কোনো request যায় না (map-এর সব কিছু file-এর ভেতরে)। তাই কে কোন address দেখছে, তা কোনো map বা CDN service জানতে পারে না।
 - Web dashboard default-এ শুধু এই computer থেকে খোলা যায়, আর প্রতিটা API call-এ token লাগে। `--host 0.0.0.0` দিলে connection plain HTTP হয়, তাই শুধু বিশ্বস্ত network-এ ব্যবহার করুন।
+- `--offline` দিলে address-এর কোনো তথ্য এই computer-এর বাইরে যায় না। কোন mode-এ কে কী দেখে, তার পুরো table: [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md#কোন-mode-এ-address-টা-কে-দেখতে-পায়)।
 - Active probing (Phase 7) default-এ বন্ধ। `--active` দিলেও স্পষ্ট confirmation (`I AM AUTHORIZED`) ছাড়া চলে না, এক run-এ সর্বোচ্চ ২০টা address, শুধু public address, আর port scan নেই। শুধু নিজের বা লিখিত অনুমতিপ্রাপ্ত system-এ চালান।
 - বাংলাদেশে সাইবার সুরক্ষা অধ্যাদেশ, ২০২৫ প্রযোজ্য; বিস্তারিত [ADVANCED_PLAN.md §9](ADVANCED_PLAN.md#9-security-ethics-ও-আইন)।

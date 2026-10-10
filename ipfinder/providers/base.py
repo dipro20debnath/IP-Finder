@@ -36,6 +36,7 @@ class Provider(ABC):
     optional_key: str | None = None  # a key that raises limits but is not required
     needs_public_ip: bool = True  # skip when the address is private/reserved
     active: bool = False  # sends packets to the target; runs only in --active mode
+    local: bool = False  # answers from files on this computer; never sends the address anywhere
     cache_ttl: int = 0  # seconds; 0 = never cache
     rate_limit: tuple[int, float] | None = None  # (calls, per seconds), client-side
     timeout: float | None = None  # seconds; None = the run's --timeout (config.timeout)
@@ -48,6 +49,8 @@ class Provider(ABC):
         """Reasons that depend only on settings (profile, key, files)."""
         if config.profile not in self.profiles:
             return f"not part of the '{config.profile}' profile (use --profile {self.profiles[0]})"
+        if config.offline and not self.local:
+            return "offline mode: this source would send the address over the network"
         if self.active and not config.active_mode:
             return "active probing is off (use --active on systems you are authorised to test)"
         if self.requires_key and not config.key_for(self.requires_key):

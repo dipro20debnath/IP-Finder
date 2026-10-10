@@ -117,6 +117,12 @@ def _build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="with --active: confirm in advance (for scripts) that you may test the targets",
     )
+    output.add_argument(
+        "--offline",
+        action="store_true",
+        help="use only local sources (address analysis, GeoLite2 files, downloaded lists); "
+        "nothing about the address leaves this computer",
+    )
 
     lookup = sub.add_parser("lookup", parents=[output], help="analyse one or more IP addresses")
     lookup.add_argument("ips", nargs="*", metavar="IP", help="IPv4/IPv6 address(es)")
@@ -156,6 +162,11 @@ def _build_parser() -> argparse.ArgumentParser:
     )
     serve.add_argument(
         "--no-cache", action="store_true", help="do not read or write data/cache.sqlite"
+    )
+    serve.add_argument(
+        "--offline",
+        action="store_true",
+        help="lookups use only local sources; nothing about the addresses leaves this computer",
     )
     serve.add_argument("--open", action="store_true", help="open the dashboard in your browser")
     serve.add_argument("--no-color", action="store_true", help="disable colours")
@@ -228,8 +239,23 @@ def _stdout_is_utf8() -> bool:
 
 def _config(args) -> Config:
     return Config.load(
-        profile=args.profile, use_cache=not args.no_cache, active_mode=args.active or None
+        profile=args.profile,
+        use_cache=not args.no_cache,
+        active_mode=args.active or None,
+        offline=getattr(args, "offline", False) or None,
     )
+
+
+def _offline_conflict(args, messages: Console) -> bool:
+    if args.offline and args.active:
+        messages.print(
+            Text(
+                "[!] --active sends packets to the target, so it cannot be used with --offline.",
+                style="red",
+            )
+        )
+        return True
+    return False
 
 
 def _confirm_active(args, count: int, messages: Console) -> bool:
@@ -311,6 +337,8 @@ def _cmd_lookup(args, console: Console, messages: Console) -> int:
     except EOFError:
         messages.print(Text("[!] No IP address given.", style="red"))
         return EXIT_USAGE
+    if _offline_conflict(args, messages):
+        return EXIT_USAGE
     if args.active and not _confirm_active(args, len(inputs), messages):
         return EXIT_USAGE
 
@@ -321,6 +349,14 @@ def _cmd_lookup(args, console: Console, messages: Console) -> int:
 
 
 def _cmd_me(args, console: Console, messages: Console) -> int:
+    if args.offline:
+        messages.print(
+            Text(
+                "[!] 'me' asks ip-api for your public address, so it cannot run --offline.",
+                style="red",
+            )
+        )
+        return EXIT_USAGE
     if args.active and not _confirm_active(args, 1, messages):
         return EXIT_USAGE
     try:
@@ -427,6 +463,14 @@ def _cmd_serve(args, messages: Console) -> int:
     if not 1 <= args.port <= 65535:
         messages.print(Text(f"[!] --port must be 1-65535, not {args.port}.", style="red"))
         return EXIT_USAGE
+    if args.offline and args.allow_active:
+        messages.print(
+            Text(
+                "[!] --allow-active sends packets, so it cannot be used with --offline.",
+                style="red",
+            )
+        )
+        return EXIT_USAGE
     host = args.host.strip("[]")
     wildcard = host in ("0.0.0.0", "::", "")
     allowed = list(args.allowed_host)
@@ -435,7 +479,9 @@ def _cmd_serve(args, messages: Console) -> int:
     token = secrets.token_urlsafe(24)
     shown = "127.0.0.1" if wildcard else host
     url = f"http://{f'[{shown}]' if ':' in shown else shown}:{args.port}/#token={token}"
-    config = Config.load(profile=args.profile, use_cache=not args.no_cache)
+    config = Config.load(
+        profile=args.profile, use_cache=not args.no_cache, offline=args.offline or None
+    )
     app = create_app(config, token, allow_active=args.allow_active, allowed_hosts=allowed)
 
     messages.print(Text(f"IP Finder {__version__} web dashboard", style="bold"))
@@ -462,6 +508,14 @@ def _cmd_serve(args, messages: Console) -> int:
                 f"    From another computer: http://<this computer's address>:{args.port}/"
                 f"#token={token}, after starting with --allowed-host <that address>.",
                 style="yellow",
+            )
+        )
+    if args.offline:
+        messages.print(
+            Text(
+                "  Offline mode: only local sources; nothing about the addresses leaves "
+                "this computer.",
+                style="dim",
             )
         )
     if args.allow_active:
@@ -591,12 +645,31 @@ def _harden_streams() -> None:
             pass
 
 
+# Options that take a value, so the value is never mistaken for a command name.
+_VALUE_OPTIONS = {"-f", "--format", "-o", "--output", "-p", "--profile", "-i", "--input-file"}
+
+
+def _command_first(argv: list[str]) -> list[str]:
+    """Put the command first, so options may come before it ("ipfinder --offline
+    lookup 8.8.8.8"). "ipfinder 8.8.8.8" and plain "ipfinder" mean "ipfinder lookup"."""
+    if argv and argv[0] in ("-h", "--help", "--version"):
+        return argv
+    value_next = False
+    for i, arg in enumerate(argv):
+        if value_next:
+            value_next = False
+        elif arg in _VALUE_OPTIONS:
+            value_next = True
+        elif not arg.startswith("-"):
+            if arg in COMMANDS:
+                return [arg, *argv[:i], *argv[i + 1 :]]
+            break  # the first plain argument is an address
+    return ["lookup", *argv]
+
+
 def main(argv: list[str] | None = None) -> int:
     argv = list(sys.argv[1:] if argv is None else argv)
-    # "ipfinder 8.8.8.8" and plain "ipfinder" are shorthand for "ipfinder lookup ..."
-    if not argv or argv[0] not in COMMANDS + ("-h", "--help", "--version"):
-        argv = ["lookup", *argv]
-    args = _build_parser().parse_args(argv)
+    args = _build_parser().parse_args(_command_first(argv))
     _harden_streams()
     no_color = getattr(args, "no_color", False)
     console = Console(no_color=no_color)  # reports

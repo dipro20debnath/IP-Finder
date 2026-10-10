@@ -6,7 +6,7 @@ from pathlib import Path
 import pytest
 
 from ipfinder import __version__
-from ipfinder.cli import main
+from ipfinder.cli import _command_first, main
 from tests.conftest import ASN_DB, CITY_DB
 
 
@@ -35,6 +35,29 @@ def test_lookup_text(capsys, no_stdin):
 def test_shorthand_without_subcommand(capsys, no_stdin):
     assert main(["1.1.1.1"]) == 0
     assert "1.1.1.1" in capsys.readouterr().out
+
+
+@pytest.mark.parametrize(
+    ("argv", "expected"),
+    [
+        (["8.8.8.8"], ["lookup", "8.8.8.8"]),
+        ([], ["lookup"]),
+        (["--no-color", "lookup", "8.8.8.8"], ["lookup", "--no-color", "8.8.8.8"]),
+        (["--offline", "batch", "ips.txt"], ["batch", "--offline", "ips.txt"]),
+        (["-f", "json", "lookup", "1.1.1.1"], ["lookup", "-f", "json", "1.1.1.1"]),
+        (["-o", "me", "8.8.8.8"], ["lookup", "-o", "me", "8.8.8.8"]),  # "me" is a file name
+        (["-v", "8.8.8.8", "me"], ["lookup", "-v", "8.8.8.8", "me"]),
+        (["--help"], ["--help"]),
+    ],
+)
+def test_options_may_come_before_the_command(argv, expected):
+    assert _command_first(argv) == expected
+
+
+def test_option_before_command_is_not_an_address(capsys, no_stdin):
+    assert main(["--no-color", "lookup", "1.1.1.1"]) == 0
+    captured = capsys.readouterr()
+    assert "1.1.1.1" in captured.out and "'lookup'" not in captured.err
 
 
 def test_json_output_with_invalid_input(capsys, no_stdin):

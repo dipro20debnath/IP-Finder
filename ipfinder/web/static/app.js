@@ -76,7 +76,9 @@
     $("token-panel").hidden = true;
     api("/api/info").then(function (r) { return r.json(); }).then(function (data) {
       info = data;
-      $("version").textContent = "Web dashboard, IP Finder " + data.version;
+      $("version").textContent = "Web dashboard, IP Finder " + data.version +
+        (data.offline ? " - offline mode: only local sources, nothing leaves this computer" : "");
+      $("me").hidden = data.offline;  // finding the public IP needs ip-api
       $("disclaimer").textContent = data.disclaimer;
       $("max-inputs").textContent = data.max_inputs;
       $("profile").value = data.default_profile;

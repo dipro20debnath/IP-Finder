@@ -50,6 +50,7 @@ class MaxMindProvider(Provider):
     layer = "L2/L3"
     description = "GeoLite2 City + ASN databases (offline; free MaxMind account)"
     cache_ttl = 0  # local file: no need to cache
+    local = True
 
     def required_files(self, config) -> list[Path]:
         return [config.maxmind_city_db, config.maxmind_asn_db]

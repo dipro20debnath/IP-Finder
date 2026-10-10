@@ -1,0 +1,177 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1280 1000" width="1280" height="1000" font-family="system-ui, -apple-system, 'Segoe UI', Roboto, 'Noto Sans', sans-serif">
+  <title>IP Finder v2 architecture</title>
+  <desc>How a lookup flows: interfaces, validator, staged orchestrator with a shared session, 27 providers in layers L1 to L10, analysis engine and outputs.</desc>
+  <defs>
+    <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0,0 L10,5 L0,10 z" fill="#486581"/>
+    </marker>
+    <style>
+      .box { fill: #ffffff; stroke: #9fb3c8; stroke-width: 1.4; }
+      .core { fill: #f0f4f8; stroke: #627d98; stroke-width: 1.6; }
+      .local { fill: #effaf3; stroke: #1b7f3b; stroke-width: 1.6; }
+      .active { fill: #fff5f5; stroke: #b42318; stroke-width: 1.6; }
+      .chip { fill: #ffffff; stroke: #9fb3c8; stroke-width: 1.2; }
+      .title { font-size: 15px; font-weight: 700; fill: #102a43; }
+      .small-title { font-size: 14px; font-weight: 700; fill: #102a43; }
+      .text { font-size: 13px; fill: #334e68; }
+      .tiny { font-size: 11.5px; fill: #334e68; }
+      .green { fill: #1b7f3b; font-weight: 600; }
+      .red { fill: #b42318; font-weight: 600; }
+      .label { font-size: 12px; fill: #486581; font-style: italic; }
+      .line { stroke: #486581; stroke-width: 1.6; fill: none; }
+      .section { font-size: 12px; font-weight: 700; fill: #829ab1; letter-spacing: .08em; }
+    </style>
+  </defs>
+
+  <rect x="0" y="0" width="1280" height="1000" fill="#f8fafc"/>
+  <text x="40" y="44" font-size="24" font-weight="800" fill="#102a43">IP Finder v2: how a lookup flows</text>
+  <text x="40" y="68" class="text">27 sources in 12 layers, one engine for the command line and the web dashboard</text>
+
+  <!-- 1. Interfaces -->
+  <rect class="box" x="40" y="90" width="430" height="70" rx="8"/>
+  <text class="title" x="56" y="116">Command line</text>
+  <text class="text" x="56" y="140">ipfinder lookup · batch · me · sources · update-lists</text>
+  <rect class="box" x="490" y="90" width="430" height="70" rx="8"/>
+  <text class="title" x="506" y="116">Web dashboard (ipfinder serve)</text>
+  <text class="text" x="506" y="140">FastAPI · token, Host and Origin checks · same sections</text>
+  <path class="line" d="M255,160 V180 M705,160 V180 M145,180 H705"/>
+  <path class="line" d="M145,180 V198" marker-end="url(#arrow)"/>
+
+  <!-- 2. Core -->
+  <rect class="core" x="40" y="200" width="210" height="100" rx="8"/>
+  <text class="title" x="56" y="226">Validator</text>
+  <text class="text" x="56" y="248">text → IP address</text>
+  <text class="text" x="56" y="266">clear errors: 010.1.1.1,</text>
+  <text class="text" x="56" y="284">hex forms, hostnames</text>
+  <path class="line" d="M250,250 H278" marker-end="url(#arrow)"/>
+
+  <rect class="core" x="280" y="200" width="640" height="100" rx="8"/>
+  <text class="title" x="296" y="224">Orchestrator: stages, one result per source (ok / skipped / error)</text>
+  <rect class="chip" x="296" y="236" width="138" height="50" rx="6"/>
+  <text class="small-title" x="306" y="256">0 · Offline (L1)</text>
+  <text class="tiny" x="306" y="274">decides what may run</text>
+  <rect class="chip" x="450" y="236" width="138" height="50" rx="6"/>
+  <text class="small-title" x="460" y="256">1 · Independent</text>
+  <text class="tiny" x="460" y="274">sources, in parallel</text>
+  <rect class="chip" x="604" y="236" width="138" height="50" rx="6"/>
+  <text class="small-title" x="614" y="256">2 · Need stage 1</text>
+  <text class="tiny" x="614" y="274">PeeringDB, Geofeed</text>
+  <rect class="chip" x="758" y="236" width="146" height="50" rx="6" style="stroke:#b42318"/>
+  <text class="small-title" x="768" y="256" style="fill:#b42318">3 · Active probes</text>
+  <text class="tiny" x="768" y="274">only with --active</text>
+  <path class="line" d="M434,261 H448 M588,261 H602 M742,261 H756"/>
+
+  <path class="line" d="M920,250 H958" marker-end="url(#arrow)" marker-start="url(#arrow)"/>
+
+  <!-- Session and data, right column -->
+  <rect class="core" x="960" y="200" width="280" height="160" rx="8"/>
+  <text class="title" x="976" y="226">Session (shared)</text>
+  <text class="text" x="976" y="250">HTTP client · DNS resolver</text>
+  <text class="text" x="976" y="270">cache: SQLite, a TTL per source</text>
+  <text class="text" x="976" y="290">rate limiters (ip-api 45/min)</text>
+  <text class="text" x="976" y="310">downloaded lists, MaxMind files</text>
+  <text class="text" x="976" y="330">one per CLI run; one per server,</text>
+  <text class="text" x="976" y="348">shared by every browser tab</text>
+  <path class="line" d="M1100,360 V408" marker-end="url(#arrow)"/>
+
+  <rect class="box" x="960" y="410" width="280" height="350" rx="8"/>
+  <text class="title" x="976" y="436">Where the data comes from</text>
+  <rect class="local" x="976" y="450" width="248" height="140" rx="6"/>
+  <text class="small-title" x="988" y="472" style="fill:#1b7f3b">This computer</text>
+  <text class="tiny" x="988" y="490">works with --offline</text>
+  <text class="text" x="988" y="512">data/GeoLite2-*.mmdb</text>
+  <text class="text" x="988" y="532">data/lists/ (update-lists)</text>
+  <text class="text" x="988" y="552">data/cache.sqlite, oui.csv</text>
+  <text class="text" x="988" y="572">.env: API keys</text>
+  <rect class="box" x="976" y="604" width="248" height="140" rx="6"/>
+  <text class="small-title" x="988" y="626">Internet</text>
+  <text class="text" x="988" y="650">public APIs (HTTPS;</text>
+  <text class="text" x="988" y="668">ip-api free tier: HTTP)</text>
+  <text class="text" x="988" y="690">DNS: Team Cymru, PTR,</text>
+  <text class="text" x="988" y="708">Spamhaus</text>
+  <text class="text red" x="988" y="730">the target itself: --active only</text>
+
+  <!-- 3. Providers -->
+  <path class="line" d="M600,300 V333" marker-end="url(#arrow)"/>
+  <text class="section" x="40" y="348">PROVIDERS: EACH ANSWERS ONE QUESTION; ONE FAILING NEVER STOPS THE OTHERS</text>
+
+  <rect class="local" x="40" y="358" width="282" height="148" rx="8"/>
+  <text class="title" x="56" y="384" style="fill:#1b7f3b">L1 Offline analysis</text>
+  <text class="text" x="56" y="408">IANA special-purpose ranges</text>
+  <text class="text" x="56" y="428">embedded IPv4: 6to4, Teredo, NAT64</text>
+  <text class="text" x="56" y="448">EUI-64 → MAC, IPv6 structure</text>
+  <text class="text" x="56" y="468">representations, multicast</text>
+  <text class="text" x="56" y="488">no database needed</text>
+
+  <rect class="box" x="339" y="358" width="282" height="148" rx="8"/>
+  <text class="title" x="355" y="384">L2–L3 Location and network</text>
+  <text class="text" x="355" y="408">ip-api · IPinfo Lite</text>
+  <text class="text green" x="355" y="428">MaxMind GeoLite2 (local file)</text>
+  <text class="text" x="355" y="448">Team Cymru (BGP origin, DNS)</text>
+  <text class="text" x="355" y="468">PeeringDB (network type)</text>
+
+  <rect class="box" x="638" y="358" width="282" height="148" rx="8"/>
+  <text class="title" x="654" y="384">L4–L6 Registry, BGP, DNS</text>
+  <text class="text" x="654" y="408">RDAP: owner, abuse contact</text>
+  <text class="text" x="654" y="428">RIPEstat: BGP, RPKI, peers</text>
+  <text class="text" x="654" y="448">reverse DNS + FCrDNS</text>
+  <text class="text" x="654" y="468">Geofeed (RFC 8805 / 9632)</text>
+
+  <rect class="box" x="40" y="522" width="282" height="148" rx="8"/>
+  <text class="title" x="56" y="548">L7–L8 Anonymity, exposure</text>
+  <text class="text green" x="56" y="572">Tor exits · iCloud Private Relay</text>
+  <text class="text green" x="56" y="592">cloud / CDN ranges · VPN lists</text>
+  <text class="text" x="56" y="612">Shodan InternetDB: open ports,</text>
+  <text class="text" x="56" y="630">software, possible CVEs</text>
+
+  <rect class="box" x="339" y="522" width="282" height="148" rx="8"/>
+  <text class="title" x="355" y="548">L9 Threat intel (--profile full)</text>
+  <text class="text" x="355" y="572">AbuseIPDB · GreyNoise</text>
+  <text class="text" x="355" y="592">VirusTotal · AlienVault OTX</text>
+  <text class="text" x="355" y="612">ThreatFox · URLhaus · Spamhaus</text>
+  <text class="text green" x="355" y="632">Feodo · Spamhaus DROP (lists)</text>
+
+  <rect class="active" x="638" y="522" width="282" height="148" rx="8"/>
+  <text class="title" x="654" y="548" style="fill:#b42318">L10 Active probes (--active)</text>
+  <text class="text" x="654" y="572">round trip: TCP handshakes, ping</text>
+  <text class="text" x="654" y="592">traceroute · TLS certificate</text>
+  <text class="text" x="654" y="612">"I AM AUTHORIZED", ≤ 20 addresses,</text>
+  <text class="text" x="654" y="630">public only, proxy detection</text>
+
+  <!-- 4. Analysis -->
+  <path class="line" d="M480,670 V713" marker-end="url(#arrow)"/>
+  <text class="label" x="490" y="697">results</text>
+  <rect class="core" x="40" y="715" width="880" height="96" rx="8"/>
+  <text class="title" x="56" y="741">L11 Analysis engine → Verdict (each score lists its reasons; rules, not probabilities)</text>
+  <text class="text" x="56" y="766">location consensus: weighted country vote, haversine spread · anycast · connection type: decision tree</text>
+  <text class="text" x="56" y="788">location confidence · reputation · exposure (kept apart) · speed-of-light check: 200 km per ms</text>
+
+  <!-- 5. Output -->
+  <path class="line" d="M480,811 V848" marker-end="url(#arrow)"/>
+  <text class="label" x="490" y="836">L12 reporting</text>
+  <rect class="box" x="40" y="850" width="208" height="76" rx="8"/>
+  <text class="title" x="56" y="876">Terminal</text>
+  <text class="tiny" x="56" y="898">rich panels; remote text</text>
+  <text class="tiny" x="56" y="914">can never control the terminal</text>
+  <rect class="box" x="264" y="850" width="208" height="76" rx="8"/>
+  <text class="title" x="280" y="876">JSON</text>
+  <text class="tiny" x="280" y="898">everything, with each</text>
+  <text class="tiny" x="280" y="914">score's breakdown</text>
+  <rect class="box" x="488" y="850" width="208" height="76" rx="8"/>
+  <text class="title" x="504" y="876">CSV</text>
+  <text class="tiny" x="504" y="898">one row per address;</text>
+  <text class="tiny" x="504" y="914">Excel formula guard</text>
+  <rect class="box" x="712" y="850" width="208" height="76" rx="8"/>
+  <text class="title" x="728" y="876">HTML report</text>
+  <text class="tiny" x="728" y="898">offline map (Leaflet + Natural</text>
+  <text class="tiny" x="728" y="914">Earth embedded), strict CSP</text>
+
+  <!-- legend -->
+  <rect class="local" x="960" y="850" width="18" height="14" rx="3"/>
+  <text class="tiny" x="986" y="862">local: answers from files, runs --offline</text>
+  <rect class="active" x="960" y="876" width="18" height="14" rx="3"/>
+  <text class="tiny" x="986" y="888">sends packets to the target (--active)</text>
+  <rect class="core" x="960" y="902" width="18" height="14" rx="3"/>
+  <text class="tiny" x="986" y="914">core: shared by every source</text>
+  <text class="label" x="40" y="966">Code: ipfinder/core (validator, orchestrator, session), ipfinder/providers, ipfinder/analysis, ipfinder/output, ipfinder/web.</text>
+</svg>

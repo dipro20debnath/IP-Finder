@@ -105,6 +105,7 @@ _PATH_SETTINGS = {
 class Config:
     profile: str = "standard"
     active_mode: bool = False
+    offline: bool = False  # only local sources: nothing about the address leaves this computer
     timeout: float = 10.0
     use_cache: bool = True
     oui_db_path: Path = Path("data/oui.csv")

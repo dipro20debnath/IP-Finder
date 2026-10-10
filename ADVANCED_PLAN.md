@@ -641,7 +641,7 @@ python -m ipfinder update-lists                       # Tor, cloud ranges, Priva
 | **7. Active Mode** ✅ (`--active` ছাড়া কখনো চলে না; test-এ যাচাই করা) | ৩–৪ দিন | Ping, traceroute, TLS cert, RTT plausibility; confirmation prompt | `--active` ছাড়া কখনো চলে না |
 | **8. Reporting** ✅ (Chromium-এ disk থেকে খুলে map আঁকা ও শূন্য network request যাচাই করা) | ১ সপ্তাহ | Rich terminal, JSON, CSV, HTML + folium map, batch progress bar | HTML report browser-এ map সহ খোলে |
 | **9. (ঐচ্ছিক) Web Dashboard** ✅ (`ipfinder serve`; Chromium-এ browser থেকে lookup যাচাই করা; token, Host/Origin যাচাই ও active-mode gate সহ) | ১–২ সপ্তাহ | FastAPI backend + Leaflet frontend; একই `ipfinder` package reuse | Browser থেকে lookup |
-| **10. Docs + Presentation** | ৩ দিন | README, architecture diagram, report, viva প্রস্তুতি | Demo script প্রস্তুত |
+| **10. Docs + Presentation** ✅ (`docs/`: architecture, report, demo, viva; `scripts/demo.py` online ও `--offline`, test-এ শুরু থেকে শেষ চলে) | ৩ দিন | README, architecture diagram, report, viva প্রস্তুতি | Demo script প্রস্তুত |
 
 **মোট: ~৮–১০ সপ্তাহ** (একজন student part-time কাজ করলে)। Phase 1–3 শেষ হলেই v1.0-এর চেয়ে অনেক শক্তিশালী একটি demo দেওয়া যাবে।
 
@@ -704,6 +704,7 @@ python -m ipfinder update-lists                       # Tor, cloud ranges, Priva
 - API key শুধু `.env`-এ; `.env` `.gitignore`-এ; repo-তে শুধু `.env.example`।
 - ip-api free endpoint HTTP (encrypted নয়)। Report-এ এটা উল্লেখ থাকবে। Sensitive investigation-এ HTTPS provider ব্যবহার করতে হবে।
 - Cache local; কোনো lookup history কোথাও upload হবে না।
+- **Phase 10 আপডেট:** `--offline` mode-এ শুধু local source চলে (L1, GeoLite2 file, download করা list); address-এর কোনো তথ্য computer-এর বাইরে যায় না। Test-এ HTTP request ও DNS query গুনে যাচাই করা।
 - প্রতিটি report-এ disclaimer: *"IP geolocation is approximate. An IP address does not identify a person."*
 - Downloaded list (Tor, cloud ranges) parse করার সময় strict validation। Malformed line skip করতে হবে, `eval` কখনো নয়।
 

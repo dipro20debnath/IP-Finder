@@ -15,6 +15,7 @@ NOT_DOWNLOADED = "list not downloaded (run: ipfinder update-lists)"
 
 class ListProvider(Provider):
     lists: tuple[str, ...] = ()  # names in ipfinder.lists.specs.SPECS
+    local = True  # the lists were downloaded beforehand by "update-lists"
 
     def unavailable_reason(self, config: Config) -> str | None:
         reason = super().unavailable_reason(config)

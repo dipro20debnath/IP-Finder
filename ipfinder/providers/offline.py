@@ -14,6 +14,7 @@ class OfflineProvider(Provider):
     needs_public_ip = False
     stage = 0
     profiles = ("quick", "standard", "full")
+    local = True
 
     async def lookup(self, ctx: LookupContext) -> dict[str, Any]:
         oui_lookup = make_lookup(ctx.config.oui_db_path)

@@ -401,3 +401,17 @@ def test_shared_session_survives_requests(mm):
     )
     assert first.status_code == second.status_code == 200
     assert len(seen) == 1
+
+
+def test_offline_server(config, fake_api, capsys, fake_uvicorn):
+    app = make_app(dataclasses.replace(config, offline=True))
+    info, me = call(
+        app, ("GET", "/api/info", {"headers": AUTH}), ("GET", "/api/me", {"headers": AUTH})
+    )
+    assert info.json()["offline"] is True
+    assert me.status_code == 400 and "Offline mode" in me.json()["detail"]
+    assert fake_api.requests == []
+
+    assert main(["serve", "--offline"]) == 0
+    assert "Offline mode" in capsys.readouterr().err
+    assert main(["serve", "--offline", "--allow-active"]) == 2

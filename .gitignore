@@ -17,3 +17,4 @@ venv/
 # Downloaded datasets, databases and lookup cache (never commit lookup history)
 data/*
 !data/README.md
+demo-output/

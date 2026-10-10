@@ -4,13 +4,14 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "ip-finder"
-version = "2.0.0a9"
+version = "2.0.0b1"
 description = "Multi-layer IP address intelligence tool (offline analysis, geolocation, network and threat data)"
 readme = "README.md"
 requires-python = ">=3.10"
 authors = [{ name = "dipro20debnath" }]
 keywords = ["ip", "geolocation", "osint", "networking", "ipv6"]
 classifiers = [
+    "Development Status :: 4 - Beta",
     "Programming Language :: Python :: 3",
     "Environment :: Console",
     "Topic :: System :: Networking",

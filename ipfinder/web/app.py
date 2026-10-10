@@ -223,6 +223,7 @@ def create_app(
             "default_profile": config.profile,
             "max_inputs": MAX_INPUTS,
             "cache": config.use_cache,
+            "offline": config.offline,
             "active_allowed": allow_active,
             "active_limit": ACTIVE_LIMIT,
             "active_warning": ACTIVE_WARNING,
@@ -235,6 +236,10 @@ def create_app(
 
     @app.get("/api/me")
     async def me() -> dict:
+        if config.offline:
+            raise HTTPException(
+                400, "Offline mode: finding the public IP needs ip-api, so it is switched off."
+            )
         try:
             return {"ip": await public_ip(state["session"])}
         except ProviderError as exc:
