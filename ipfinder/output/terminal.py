@@ -986,7 +986,7 @@ def _active(report: IPReport) -> list[Table]:
         if "latitude" in vantage:
             place = ", ".join(v for v in (vantage.get("city"), vantage.get("country_code")) if v)
             place = place or f"{vantage['latitude']}, {vantage['longitude']}"
-            source = f"from {vantage['source']}, +-{vantage['uncertainty_km']} km"
+            source = f"from {vantage.get('source', '?')}, +-{vantage.get('uncertainty_km', '?')} km"
             rows.append(("Your location", _safe(f"{place} ({source})", "dim")))
         elif vantage.get("error"):
             rows.append(("Your location", _safe(vantage["error"], "dim")))

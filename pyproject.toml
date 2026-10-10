@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "ip-finder"
-version = "2.0.0a7"
+version = "2.0.0a8"
 description = "Multi-layer IP address intelligence tool (offline analysis, geolocation, network and threat data)"
 readme = "README.md"
 requires-python = ">=3.10"
@@ -35,6 +35,10 @@ ipfinder = "ipfinder.cli:main"
 
 [tool.setuptools.packages.find]
 include = ["ipfinder*"]
+
+[tool.setuptools.package-data]
+# Embedded in HTML reports: Leaflet (BSD-2) and Natural Earth outlines (public domain)
+"ipfinder.output" = ["assets/*"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

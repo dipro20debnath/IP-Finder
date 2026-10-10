@@ -216,7 +216,7 @@ Active mode চালু করতে `--active` flag এবং একটি স
 - Terminal (রঙিন table, `rich`)
 - JSON (machine-readable, সব raw data সহ)
 - CSV (batch-এর জন্য)
-- **HTML report**: Leaflet map (`folium`), প্রতিটি provider-এর marker, accuracy circle
+- **HTML report**: Leaflet map, প্রতিটি provider-এর marker, accuracy circle (বাস্তবায়নে `folium`-এর বদলে Leaflet ও Natural Earth file-এর ভেতরেই রাখা হয়েছে; কারণ নিচে Phase 8-এ)
 - Batch mode: file থেকে হাজারো IP (ip-api batch endpoint: এক request-এ সর্বোচ্চ 100 IP)
 
 ---
@@ -400,7 +400,7 @@ class Provider(ABC):
 | `rich` | সুন্দর terminal table |
 | `argparse` (built-in) | CLI (extra dependency ছাড়া) |
 | নিজস্ব `.env` parser (`core/config.py`) | API key `.env` থেকে পড়া (extra dependency ছাড়া) |
-| `folium` | HTML map (Leaflet) |
+| ~~`folium`~~ → embedded Leaflet 1.9.4 + Natural Earth | HTML map (offline; folium CDN থেকে script নামায়) |
 | `pytest`, `respx` | Test ও HTTP mocking |
 
 ### 4.5 Cache ও Privacy
@@ -638,7 +638,7 @@ python -m ipfinder update-lists                       # Tor, cloud ranges, Priva
 | **5. Threat Intel** ✅ (code ও test; আসল API-তে প্রথম চালানো বাকি) | ১ সপ্তাহ | AbuseIPDB, GreyNoise, VirusTotal, OTX, abuse.ch, Spamhaus DQS | Key না থাকলে provider "skipped (no key)" দেখায়, crash করে না |
 | **6. Analysis Engine** ✅ (প্রতিটা score-এর unit test আছে; §5.5.1-এ বাস্তবায়নের পার্থক্য) | ১ সপ্তাহ | Consensus, classification, confidence, reputation/exposure score, anycast | Score-গুলোর unit test আছে |
 | **7. Active Mode** ✅ (`--active` ছাড়া কখনো চলে না; test-এ যাচাই করা) | ৩–৪ দিন | Ping, traceroute, TLS cert, RTT plausibility; confirmation prompt | `--active` ছাড়া কখনো চলে না |
-| **8. Reporting** | ১ সপ্তাহ | Rich terminal, JSON, CSV, HTML + folium map, batch progress bar | HTML report browser-এ map সহ খোলে |
+| **8. Reporting** ✅ (Chromium-এ disk থেকে খুলে map আঁকা ও শূন্য network request যাচাই করা) | ১ সপ্তাহ | Rich terminal, JSON, CSV, HTML + folium map, batch progress bar | HTML report browser-এ map সহ খোলে |
 | **9. (ঐচ্ছিক) Web Dashboard** | ১–২ সপ্তাহ | FastAPI backend + Leaflet frontend; একই `ipfinder` package reuse | Browser থেকে lookup |
 | **10. Docs + Presentation** | ৩ দিন | README, architecture diagram, report, viva প্রস্তুতি | Demo script প্রস্তুত |
 

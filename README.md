@@ -1,4 +1,4 @@
-# IP Finder v2 (Phase 0–7)
+# IP Finder v2 (Phase 0–8)
 
 একটি IP address থেকে **আইনসঙ্গতভাবে যা যা জানা সম্ভব**, তা ধাপে ধাপে বের করার Python tool। পুরো roadmap: [ADVANCED_PLAN.md](ADVANCED_PLAN.md)।
 
@@ -12,10 +12,66 @@
 - **Phase 5:** threat intelligence (AbuseIPDB, GreyNoise, VirusTotal, OTX, ThreatFox, URLhaus, Spamhaus; Feodo Tracker ও Spamhaus DROP list)
 - **Phase 6:** analysis engine (connection type, anycast, location consensus ও confidence, reputation ও exposure score)
 - **Phase 7:** active mode (RTT, traceroute, TLS certificate, speed-of-light check), শুধু `--active` আর confirmation-এর পরে
+- **Phase 8:** reporting (CSV, offline map সহ HTML report, `batch` command, progress bar)
 
 কোনো API key ছাড়াই চলে; key বা database যোগ করলে আরও source যুক্ত হয়।
 
 > ⚠️ IP geolocation আনুমানিক। একটি IP address কোনো ব্যক্তিকে শনাক্ত করে না।
+
+---
+
+## Phase 8: reporting (CSV, HTML map, batch)
+
+```bash
+ipfinder lookup -f html -o report.html 8.8.8.8 1.1.1.1   # map সহ HTML report
+ipfinder lookup -f csv -o report.csv 8.8.8.8 1.1.1.1     # Excel-এর জন্য CSV
+ipfinder batch ips.txt -f html -o report.html            # file থেকে (প্রতি লাইনে একটা address, # = comment)
+```
+
+**HTML report:** একটাই file, browser-এ double-click করলেই খোলে। প্রতিটা address-এর জন্য:
+
+- উপরে কয়েকটা card: connection type, consensus location, location confidence, reputation, exposure, speed-of-light check (যেগুলো আছে)।
+- একটা interactive map:
+  - প্রতিটা source-এর point আলাদা রঙে (geofeed, Private Relay, MaxMind, ip-api, IPinfo Lite)।
+  - MaxMind-এর accuracy radius-এর বৃত্ত।
+  - একাধিক source থাকলে consensus point।
+  - `--active`-এর পরে আপনার অবস্থানের চারপাশে speed-of-light বৃত্ত। Address-টা আসলে এই বৃত্তের ভেতরেই থাকতে হবে।
+- Address anycast হলে সতর্কবার্তা, কারণ তখন point-গুলো database-এর মত, আপনি আসলে কোথায় পৌঁছান তা নয়।
+- নিচে "Full report": terminal-এর পুরো report, রঙ সহ।
+
+**Map কেন পুরোপুরি offline:** Leaflet 1.9.4 (BSD 2-Clause) আর Natural Earth 1:110m-এর দেশের সীমানা ও ২৪৩টা শহর (public domain) file-এর ভেতরেই রাখা। ফলে report খুললে কারো কাছে কোনো request যায় না, আর কে কোন address দেখছে তাও কেউ জানতে পারে না। চারটা address-এর একটা report প্রায় 450 KB। Plan-এ `folium` লেখা ছিল, কিন্তু সেটা ব্যবহার করা হয়নি, কারণ:
+
+1. folium 0.20.0-এর তৈরি HTML চারটা CDN থেকে Leaflet, jQuery, Bootstrap ও Font Awesome নামায়: cdn.jsdelivr.net, code.jquery.com, cdnjs.cloudflare.com আর netdna.bootstrapcdn.com। এটা folium-এর wheel খুলে দেখা হয়েছে।
+2. folium-এর জন্য `numpy`, `requests`, `jinja2`, `branca` আর `xyzservices` লাগে।
+3. OpenStreetMap-এর tile server Referer header ছাড়া request ফিরিয়ে দেয় ("Referer is required")। Disk থেকে খোলা (file://) page Referer পাঠাতে পারে না।
+4. CARTO-র basemap-এ এখন API key লাগে।
+
+OpenStreetMap-এর রাস্তার map তবুও একটা ঐচ্ছিক layer হিসেবে আছে। Report কোনো web server থেকে দেখালে সেটা চালু করা যায়।
+
+**নিরাপত্তা:** Address-এর নাম, AS name, hostname-এর মতো text network থেকে আসে, তাই ধরে নেওয়া হয় এগুলো ক্ষতিকর হতে পারে।
+
+- সব text HTML-escape করা হয়।
+- Map-এর label `textContent` দিয়ে বসানো হয়, কখনো HTML হিসেবে নয়।
+- Embedded data নিজের `<script>` block বন্ধ করতে পারে না।
+- Content-Security-Policy শুধু দুটো script চালাতে দেয়, তাদের SHA-256 hash দিয়ে: Leaflet আর map-এর নিজের script। অন্য কোনো script, form বা বাইরের connection চলে না। Test-এ `</script><img onerror=…>` ধরনের AS name দিয়ে এটা যাচাই করা হয়েছে।
+
+**CSV:** প্রতি address-এ একটা row, ৩৮টা column:
+
+- address type, connection type, consensus location ও confidence।
+- ASN, AS name, prefix, RPKI, registry-র নাম, abuse email, PTR।
+- Tor, Private Relay, cloud, VPN, datacenter list।
+- Reputation ও exposure score, খোলা port, সম্ভাব্য CVE, RTT, speed-of-light ফল।
+- কোন source সফল বা ব্যর্থ হলো।
+
+সব data চাইলে JSON ব্যবহার করুন। ভুল input-ও একটা row পায়, যেখানে `error` column-এ কারণ লেখা থাকে। Network থেকে আসা কোনো text `=`, `+`, `-` বা `@` দিয়ে শুরু হলে সামনে `'` বসানো হয়। এতে Excel বা LibreOffice সেটাকে formula হিসেবে চালায় না ("CSV injection")। আসল সংখ্যা, যেমন ঋণাত্মক longitude, সংখ্যাই থাকে। `-o` দিয়ে file-এ লিখলে শুরুতে UTF-8 BOM বসে, যাতে Excel "Linköping" বা বাংলা নাম ঠিকভাবে দেখায়।
+
+**Batch ও progress:** `ipfinder batch ips.txt` আর `ipfinder lookup -i ips.txt` একই কাজ করে। একাধিক address হলে stderr-এ একটা progress bar দেখায় (কতগুলো হলো, এখন কোনটা চলছে, কত সময় গেল)। Bar শুধু terminal-এ দেখায় আর শেষে মুছে যায়, তাই `> out.csv` বা pipe-এ কোনো প্রভাব পড়ে না। ip-api-র batch endpoint (এক request-এ ১০০টা address) Phase 2 থেকেই ব্যবহার হচ্ছে।
+
+**Browser-এ যাচাই:** `scripts/check_html_report.py` একটা report আসল Chromium-এ disk থেকে খোলে। তারপর দেখে প্রতিটা map আঁকা হয়েছে কিনা, page-এ কোনো error বা CSP violation আছে কিনা, আর কোনো network request গেছে কিনা। এর জন্য Playwright লাগে (ঐচ্ছিক)। এই repo-তে চালানো ফল: `maps: 2 of 2 drawn, 844 shapes`, কোনো error নেই, network request শূন্য।
+
+![HTML report-এর উদাহরণ](docs/html-report-example.png)
+
+*ছবিটা MaxMind-এর official **test** database দিয়ে বানানো (81.2.69.142 → London, 89.160.20.112 → Linköping), আসল GeoLite2 দিয়ে নয়। ip-api-র মতো online source সেই environment থেকে পৌঁছাতে পারেনি, তাই map-এ শুধু MaxMind-এর point আছে।*
 
 ---
 
@@ -449,7 +505,10 @@ ipfinder lookup "৮.৮.৮.৮"                  # বাংলা সংখ�
 ipfinder lookup -v 2001:1::1              # Python flags ও সব matching range সহ
 ipfinder lookup -f json 8.8.8.8           # JSON output
 ipfinder lookup -f json -o report.json 8.8.8.8
+ipfinder lookup -f csv -o report.csv 8.8.8.8 1.1.1.1    # CSV (Excel-এ খোলে)
+ipfinder lookup -f html -o report.html 8.8.8.8          # map সহ HTML report (offline-এ খোলে)
 ipfinder lookup -i ips.txt -f json        # file থেকে (প্রতি লাইনে একটি IP, # = comment)
+ipfinder batch ips.txt -f csv -o out.csv  # একই কাজ, progress bar সহ
 cat ips.txt | ipfinder lookup -f json     # stdin থেকে
 ipfinder lookup --profile quick 8.8.8.8   # শুধু offline + ip-api (দ্রুত)
 ipfinder lookup --profile full 8.8.8.8    # + threat intelligence (key লাগে, address তৃতীয় পক্ষে যায়)
@@ -521,7 +580,7 @@ $ ipfinder fe80::21a:2bff:fe3c:4d5e%eth0
 ```text
 IP-Finder/
 ├── ipfinder/
-│   ├── cli.py                  # argparse CLI (lookup, me, sources, cache, update-lists; --active gate)
+│   ├── cli.py                  # argparse CLI (lookup, batch, me, sources, cache, update-lists; --active gate; progress bar)
 │   ├── core/
 │   │   ├── validator.py        # input → validated address, helpful errors
 │   │   ├── text.py             # version-independent IPv6 text, safe display of input
@@ -586,8 +645,15 @@ IP-Finder/
 │   │   └── verdict.py          # the analysis engine: everything above in one verdict
 │   └── output/
 │       ├── terminal.py         # rich panels (no markup parsing, control characters escaped)
-│       └── json_out.py
-├── scripts/capture_fixtures.py # Phase 0: record real API responses for tests
+│       ├── json_out.py
+│       ├── csv_out.py          # one row per address; formula-injection guard
+│       ├── html_report.py      # self-contained report: map, cards, terminal export, strict CSP
+│       └── assets/             # Leaflet 1.9.4 + Natural Earth 1:110m (see assets/README.md)
+├── scripts/
+│   ├── capture_fixtures.py     # Phase 0: record real API responses for tests
+│   ├── build_world_map.py      # Phase 8: rebuild assets/world-110m.json from Natural Earth
+│   └── check_html_report.py    # Phase 8: open a report in Chromium (Playwright) and check the map
+├── docs/html-report-example.png
 ├── tests/                      # pytest; runs offline (fake HTTP + DNS)
 │   └── data/maxmind/           # MaxMind's official test databases (MIT licence)
 ├── data/                       # downloaded databases + cache (git-ignored)
@@ -640,7 +706,8 @@ python scripts/capture_fixtures.py 8.8.8.8 --only ip-api rdap   # IP আগে, 
 | 5 | AbuseIPDB, GreyNoise, VirusTotal, OTX, ThreatFox, URLhaus, Spamhaus ZEN; Feodo ও Spamhaus DROP list | ✅ (code ও test; আসল API-তে প্রথম চালানো বাকি) |
 | 6 | Connection type, anycast, location consensus ও confidence, reputation ও exposure score | ✅ (প্রতিটা score-এর unit test আছে) |
 | 7 | `--active`: RTT (TCP + ping), traceroute, TLS certificate, speed-of-light check, confirmation, proxy detection | ✅ (`--active` ছাড়া কখনো চলে না, test-এ যাচাই করা) |
-| 8–10 | Reports (CSV, HTML map), dashboard, presentation | ⏳ |
+| 8 | CSV, offline map সহ HTML report, `batch` command, progress bar | ✅ (HTML report আসল Chromium-এ disk থেকে খুলে map আঁকা ও শূন্য network request যাচাই করা) |
+| 9–10 | (ঐচ্ছিক) web dashboard, docs ও presentation | ⏳ |
 
 `ipfinder sources` চালালে প্রতিটি data source-এর phase ও API-key অবস্থা দেখা যায়।
 
@@ -649,5 +716,6 @@ python scripts/capture_fixtures.py 8.8.8.8 --only ip-api rdap   # IP আগে, 
 ## দায়িত্বশীল ব্যবহার
 
 - Phase 1 পুরোপুরি passive ও offline। কোনো packet কোথাও পাঠায় না।
+- HTML report খুললে কোনো request যায় না (map-এর সব কিছু file-এর ভেতরে)। তাই কে কোন address দেখছে, তা কোনো map বা CDN service জানতে পারে না।
 - Active probing (Phase 7) default-এ বন্ধ। `--active` দিলেও স্পষ্ট confirmation (`I AM AUTHORIZED`) ছাড়া চলে না, এক run-এ সর্বোচ্চ ২০টা address, শুধু public address, আর port scan নেই। শুধু নিজের বা লিখিত অনুমতিপ্রাপ্ত system-এ চালান।
 - বাংলাদেশে সাইবার সুরক্ষা অধ্যাদেশ, ২০২৫ প্রযোজ্য; বিস্তারিত [ADVANCED_PLAN.md §9](ADVANCED_PLAN.md#9-security-ethics-ও-আইন)।

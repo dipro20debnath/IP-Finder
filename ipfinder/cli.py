@@ -2,6 +2,8 @@
 
     ipfinder lookup 8.8.8.8 2001:4860:4860::8888
     ipfinder lookup 8.8.8.8 -f json -o report.json
+    ipfinder lookup 8.8.8.8 1.1.1.1 -f html -o report.html   (map; opens offline)
+    ipfinder batch ips.txt -f csv -o results.csv             (one row per address)
     cat ips.txt | ipfinder lookup -f json
     ipfinder lookup 8.8.8.8 --profile quick --no-cache
     ipfinder lookup 8.8.8.8 --active   (ping, traceroute, TLS certificate; asks first)
@@ -36,6 +38,14 @@ from dataclasses import replace
 from pathlib import Path
 
 from rich.console import Console
+from rich.progress import (
+    BarColumn,
+    MofNCompleteColumn,
+    Progress,
+    SpinnerColumn,
+    TextColumn,
+    TimeElapsedColumn,
+)
 from rich.table import Table
 from rich.text import Text
 
@@ -48,7 +58,7 @@ from ipfinder.core.text import display_safe
 from ipfinder.lists.maxmind import update_maxmind
 from ipfinder.lists.specs import SPECS
 from ipfinder.lists.store import ListStore
-from ipfinder.output import json_out, terminal
+from ipfinder.output import csv_out, html_report, json_out, terminal
 from ipfinder.providers import PLANNED_PROVIDERS, default_providers
 from ipfinder.providers.base import ProviderError
 from ipfinder.providers.ipapi import public_ip
@@ -56,7 +66,7 @@ from ipfinder.providers.list_base import ListProvider
 
 EXIT_OK, EXIT_INVALID_INPUT, EXIT_USAGE, EXIT_INTERNAL = 0, 1, 2, 3
 EXIT_INTERRUPTED = 130
-COMMANDS = ("lookup", "me", "sources", "cache", "update-lists")
+COMMANDS = ("lookup", "batch", "me", "sources", "cache", "update-lists")
 LIST_NAMES = (*SPECS, "maxmind")
 
 
@@ -69,7 +79,14 @@ def _build_parser() -> argparse.ArgumentParser:
     sub = parser.add_subparsers(dest="command")
 
     output = argparse.ArgumentParser(add_help=False)
-    output.add_argument("-f", "--format", choices=("text", "json"), default="text")
+    output.add_argument(
+        "-f",
+        "--format",
+        choices=("text", "json", "csv", "html"),
+        default="text",
+        help="text (default), json (everything), csv (one row per address), "
+        "html (report with a map; works offline)",
+    )
     output.add_argument("-o", "--output", type=Path, help="write the result to this file")
     output.add_argument(
         "-v", "--verbose", action="store_true", help="also show Python flags and all ranges"
@@ -104,6 +121,10 @@ def _build_parser() -> argparse.ArgumentParser:
         "-i", "--input-file", type=Path, help="read addresses from a file (one per line)"
     )
 
+    batch = sub.add_parser(
+        "batch", parents=[output], help="analyse every address in a file (one per line)"
+    )
+    batch.add_argument("file", type=Path, help="text file: one address per line, # = comment")
     sub.add_parser("me", parents=[output], help="analyse your own public IP address")
     sub.add_parser("sources", help="show data sources, their status and API-key needs")
     cache = sub.add_parser("cache", help="show or clear the local lookup cache")
@@ -239,10 +260,32 @@ def _confirm_active(args, count: int, messages: Console) -> bool:
     return True
 
 
-async def _lookup_all(inputs: list[str], config: Config):
+async def _lookup_all(inputs: list[str], config: Config, on_progress=None):
     async with Session(config) as session:
-        reports, errors = await analyze_many(inputs, session)
+        reports, errors = await analyze_many(inputs, session, on_progress=on_progress)
         return reports, errors, session.cache.warning
+
+
+def _run_with_progress(inputs: list[str], config: Config, messages: Console):
+    """A progress bar on stderr for several addresses (only on a terminal, so pipes
+    and files stay clean)."""
+    if len(inputs) < 2 or not messages.is_terminal:
+        return asyncio.run(_lookup_all(inputs, config))
+    columns = (
+        SpinnerColumn(),
+        TextColumn("{task.description}"),
+        BarColumn(),
+        MofNCompleteColumn(),
+        TimeElapsedColumn(),
+    )
+    with Progress(*columns, console=messages, transient=True) as progress:
+        task = progress.add_task("Looking up", total=len(inputs))
+
+        def tick(done: int, total: int, current: str | None) -> None:
+            label = f"Looking up {display_safe(current)[:40]}" if current else "Done"
+            progress.update(task, completed=done, description=label)
+
+        return asyncio.run(_lookup_all(inputs, config, tick))
 
 
 async def _lookup_me(config: Config):
@@ -265,7 +308,7 @@ def _cmd_lookup(args, console: Console, messages: Console) -> int:
     if args.active and not _confirm_active(args, len(inputs), messages):
         return EXIT_USAGE
 
-    reports, errors, warning = asyncio.run(_lookup_all(inputs, _config(args)))
+    reports, errors, warning = _run_with_progress(inputs, _config(args), messages)
     if warning:
         messages.print(Text(f"[!] {warning}", style="yellow"))
     return _emit(args, reports, errors, console, messages)
@@ -310,6 +353,12 @@ def _emit(args, reports, errors, console: Console, messages: Console) -> int:
         # Non-ASCII stays readable in UTF-8 files; other stdout encodings get \uXXXX.
         ascii_only = not args.output and not _stdout_is_utf8()
         rendered = json_out.render(reports, errors, ascii_only=ascii_only) + "\n"
+    elif args.format == "csv":
+        rendered = csv_out.render(reports, errors)
+        if args.output:
+            rendered = "\ufeff" + rendered  # BOM: Excel then reads the file as UTF-8
+    elif args.format == "html":
+        rendered = html_report.render(reports, errors, args.verbose)
     elif args.output:
         buffer = io.StringIO()
         terminal.print_reports(
@@ -325,7 +374,7 @@ def _emit(args, reports, errors, console: Console, messages: Console) -> int:
             # Rendered fully before opening the file, so a failure never truncates it.
             if not _write_output(args.output, rendered, messages):
                 return EXIT_USAGE
-            kind = "JSON" if args.format == "json" else "text"
+            kind = {"json": "JSON", "csv": "CSV", "html": "HTML"}.get(args.format, "text")
             messages.print(Text(f"Saved {kind} report to {args.output}", style="green"))
         else:
             sys.stdout.write(rendered)
@@ -487,6 +536,8 @@ def main(argv: list[str] | None = None) -> int:
             return _cmd_update_lists(args, console, messages)
         if args.command == "me":
             return _cmd_me(args, console, messages)
+        if args.command == "batch":
+            args.ips, args.input_file = [], args.file
         return _cmd_lookup(args, console, messages)
     except KeyboardInterrupt:
         return EXIT_INTERRUPTED

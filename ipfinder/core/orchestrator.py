@@ -130,14 +130,17 @@ async def _prefetch(inputs: list[str], session, providers: list[Provider]) -> li
 
 
 async def analyze_many(
-    inputs: list[str], session, providers: list[Provider] | None = None
+    inputs: list[str], session, providers: list[Provider] | None = None, on_progress=None
 ) -> tuple[list[IPReport], list[dict]]:
-    """Analyse several inputs; invalid ones are collected as errors instead of raising."""
+    """Analyse several inputs; invalid ones are collected as errors instead of raising.
+    ``on_progress(done, total, input)`` is called after each input (for a progress bar)."""
     providers = default_providers() if providers is None else providers
     batch_notes = await _prefetch(inputs, session, providers)
     reports: list[IPReport] = []
     errors: list[dict] = []
-    for raw in inputs:
+    for done, raw in enumerate(inputs, start=1):
+        if on_progress is not None:
+            on_progress(done - 1, len(inputs), raw)
         try:
             report = await analyze(raw, session, providers)
         except InvalidIPError as exc:
@@ -154,4 +157,6 @@ async def analyze_many(
             continue
         report.notes.extend(batch_notes)
         reports.append(report)
+    if on_progress is not None:
+        on_progress(len(inputs), len(inputs), None)
     return reports, errors
