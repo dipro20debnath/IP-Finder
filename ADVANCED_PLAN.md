@@ -91,7 +91,7 @@ Data source-গুলোর তথ্য (free/key, rate limit, 2025-এর প�
 
 > ⚠️ **Implementation-এর জরুরি বিষয় (Python 3.13-এ পরীক্ষিত):** Python `2002::/16` (6to4) ও `2001::/32` (Teredo)-কে `is_global == False` ধরে। তাই v1.0-এর মতো "not global হলে বাদ" নিয়ম রাখলে এসব address বাদ পড়ে যাবে। **আগে embedded IPv4 বের করতে হবে, তারপর classify করতে হবে।**
 >
-> **Phase 1-এ পাওয়া আরও তথ্য (Python 3.10–3.14-এ পরীক্ষিত):** Python-এর `is_global` কয়েকটি address-এ IANA registry-র সাথে মেলে না (যেমন `5f00::1` SRv6, `2001:1::3` RFC 9665, `4000::1` unallocated)। Python 3.12.3 `3fff::/20` (RFC 9637) চেনেই না। তাই implementation-এ IANA registry থেকে নিজস্ব table রাখা হয়েছে (`ipfinder/core/special_ranges.py`, বিস্তারিত README-তে)।
+> **Phase 1-এ পাওয়া আরও তথ্য (Python 3.10–3.14-এ পরীক্ষিত):** Python-এর `is_global` কয়েকটি address-এ IANA registry-র সাথে মেলে না (যেমন `5f00::1` SRv6, `2001:1::3` RFC 9665, `4000::1` unallocated)। Python 3.12.3 `3fff::/20` (RFC 9637) চেনেই না। তাই implementation-এ IANA registry থেকে নিজস্ব table রাখা হয়েছে (`ipfinder/core/special_ranges.py`, বিস্তারিত `docs/PHASE_NOTES.md`-এর Phase 1 অংশে)।
 
 ### L2: Geolocation (multi-provider consensus)
 
@@ -417,7 +417,7 @@ class Provider(ABC):
 
 ### 5.1 Offline Analysis (Python 3.13-এ পরীক্ষিত)
 
-> **Phase 1 আপডেট:** নিচের `classify()` প্রাথমিক নকশা, যা Python-এর `is_*` flag-এর উপর নির্ভর করে। বাস্তবায়নে এটা বদলে IANA registry-ভিত্তিক `ipfinder/core/special_ranges.classify()` করা হয়েছে, কারণ Python-এর flag কয়েকটি address-এ IANA-র সাথে মেলে না (যেমন `2001:1::3`, `5f00::1`; বিস্তারিত README-তে)। `embedded_ipv4()` ও `eui64_mac()`-এর ধারণা এখনও প্রযোজ্য; আসল code-এ group-bit ও IANA-reserved ID যাচাইও যোগ হয়েছে।
+> **Phase 1 আপডেট:** নিচের `classify()` প্রাথমিক নকশা, যা Python-এর `is_*` flag-এর উপর নির্ভর করে। বাস্তবায়নে এটা বদলে IANA registry-ভিত্তিক `ipfinder/core/special_ranges.classify()` করা হয়েছে, কারণ Python-এর flag কয়েকটি address-এ IANA-র সাথে মেলে না (যেমন `2001:1::3`, `5f00::1`; বিস্তারিত `docs/PHASE_NOTES.md`-এর Phase 1 অংশে)। `embedded_ipv4()` ও `eui64_mac()`-এর ধারণা এখনও প্রযোজ্য; আসল code-এ group-bit ও IANA-reserved ID যাচাইও যোগ হয়েছে।
 
 ```python
 import ipaddress

@@ -28,7 +28,7 @@ Interface ID-র মাঝখানে `ff:fe` থাকলে সেটা MAC 
 - `2001:1::3` (RFC 9665) globally reachable, অথচ Python বলে `False`।
 - `3fff::1` (documentation) Python 3.12.3-এ `True`, বাকিগুলোতে `False`।
 
-একই input-এ version ভেদে ভিন্ন ফল একটা tool-এর জন্য গ্রহণযোগ্য নয়। কোথায়: `core/special_ranges.py`, README-র Phase 1 table।
+একই input-এ version ভেদে ভিন্ন ফল একটা tool-এর জন্য গ্রহণযোগ্য নয়। কোথায়: `core/special_ranges.py`, [PHASE_NOTES.md](PHASE_NOTES.md)-এর Phase 1 table।
 
 **৫. RPKI "invalid" মানেই কি hijack?**
 না। `invalid_asn` মানে কোনো ROA এই AS-কে অনুমতি দেয় না: hijack হতে পারে, আবার ভুল configuration-ও হতে পারে। `unknown` মানে কোনো ROA নেই, অর্থাৎ সুরক্ষিত নয়, কিন্তু ভুলও নয়। Tool প্রতিটা status-এর মানে লিখে দেয়। কোথায়: `providers/ripestat.py`।

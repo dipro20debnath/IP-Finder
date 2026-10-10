@@ -1,852 +1,685 @@
-# IP Finder v2 (Phase 0–10)
+# IP Finder v2
 
-একটি IP address থেকে **আইনসঙ্গতভাবে যা যা জানা সম্ভব**, তা ধাপে ধাপে বের করার Python tool। পুরো roadmap: [ADVANCED_PLAN.md](ADVANCED_PLAN.md)।
+A Python tool that finds out **everything that can legitimately be known about an IP address**: what kind of address it is, where its network is, who owns it, how it is routed, whether it belongs to a cloud, a VPN or Tor, which services it exposes, and whether it has a bad reputation. Every answer comes with its source, a confidence level and its limits.
 
-এই version-এ আছে:
+- **27 sources in 12 layers**, from pure address analysis to threat intelligence.
+- **Works with no API key.** Keys and databases only add sources.
+- **Passive by default.** A fully offline mode sends nothing anywhere. Active probes run only with explicit permission.
+- **Four ways to see the result:** terminal, JSON, CSV, and an HTML report with a map that opens without internet. There is also a browser dashboard.
 
-- **Phase 0:** setup, CI, আসল API response রেকর্ড করার script
-- **Phase 1:** offline analysis
-- **Phase 2:** location ও network (ip-api, IPinfo Lite, MaxMind GeoLite2, Team Cymru, PeeringDB)
-- **Phase 3:** registry, routing ও DNS (RDAP, RIPEstat BGP/RPKI, reverse DNS + FCrDNS, Geofeed)
-- **Phase 4:** anonymity ও exposure (Tor exit, iCloud Private Relay, cloud/CDN range, VPN/datacenter list, Shodan InternetDB; `update-lists`)
-- **Phase 5:** threat intelligence (AbuseIPDB, GreyNoise, VirusTotal, OTX, ThreatFox, URLhaus, Spamhaus; Feodo Tracker ও Spamhaus DROP list)
-- **Phase 6:** analysis engine (connection type, anycast, location consensus ও confidence, reputation ও exposure score)
-- **Phase 7:** active mode (RTT, traceroute, TLS certificate, speed-of-light check), শুধু `--active` আর confirmation-এর পরে
-- **Phase 8:** reporting (CSV, offline map সহ HTML report, `batch` command, progress bar)
-- **Phase 9:** browser থেকে lookup করার web dashboard (`ipfinder serve`; ঐচ্ছিক)
-- **Phase 10:** architecture, project report, demo script, viva প্রস্তুতি; `--offline` mode
-
-কোনো API key ছাড়াই চলে; key বা database যোগ করলে আরও source যুক্ত হয়।
-
-> ⚠️ IP geolocation আনুমানিক। একটি IP address কোনো ব্যক্তিকে শনাক্ত করে না।
-
-## দ্রুত শুরু
-
-```bash
-git clone https://github.com/dipro20debnath/IP-Finder.git && cd IP-Finder
-python -m venv .venv && source .venv/bin/activate     # Windows: .venv\Scripts\activate
-python -m pip install -e ".[dev]"
-
-ipfinder 8.8.8.8                       # সব স্তর, সব source
-ipfinder --offline 100.64.1.1          # কিছুই বাইরে যায় না
-ipfinder lookup 8.8.8.8 1.1.1.1 -f html -o report.html
-ipfinder serve --open                  # browser-এ dashboard
-python scripts/demo.py --offline       # পুরো demo, internet ছাড়া
-```
-
-## Documentation
-
-| Document | কী আছে |
-|---|---|
-| [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) | Diagram, একটা lookup-এর যাত্রা, provider-এর contract, কোন mode-এ address কে দেখে |
-| [docs/REPORT.md](docs/REPORT.md) | Project report: লক্ষ্য, design, algorithm, testing, ফল, সীমাবদ্ধতা, তথ্যসূত্র |
-| [docs/DEMO.md](docs/DEMO.md) | ১০ মিনিটের demo: প্রতিটা step-এ কী চালাবেন, কী বলবেন; online ও offline পথ |
-| [docs/VIVA.md](docs/VIVA.md) | Viva-র ৩৫টা প্রশ্ন ও উত্তর, প্রতিটা উত্তরের code কোথায় |
-| [ADVANCED_PLAN.md](ADVANCED_PLAN.md) | পুরো plan, source-এর যাচাই, roadmap |
+> ⚠️ IP geolocation is approximate. An IP address does not identify a person.
 
 ![IP Finder architecture](docs/architecture.svg)
 
-নিচের অংশগুলো phase অনুযায়ী, সবচেয়ে নতুনটা আগে।
+---
+
+## Contents
+
+1. [Quick start](#quick-start)
+2. [Installation](#installation)
+3. [Usage guide: basic to advanced](#usage-guide-basic-to-advanced)
+   - [Level 1: first lookups](#level-1-first-lookups)
+   - [Level 2: reading a report](#level-2-reading-a-report)
+   - [Level 3: files, batches and output formats](#level-3-files-batches-and-output-formats)
+   - [Level 4: more sources (keys, GeoLite2, lists)](#level-4-more-sources-keys-geolite2-lists)
+   - [Level 5: profiles, privacy and offline mode](#level-5-profiles-privacy-and-offline-mode)
+   - [Level 6: active probes](#level-6-active-probes)
+   - [Level 7: the web dashboard](#level-7-the-web-dashboard)
+   - [Level 8: scripting and automation](#level-8-scripting-and-automation)
+   - [Level 9: using it as a Python library](#level-9-using-it-as-a-python-library)
+4. [Command reference](#command-reference)
+5. [Settings reference](#settings-reference)
+6. [What it can tell you: the 12 layers](#what-it-can-tell-you-the-12-layers)
+7. [How it works](#how-it-works)
+8. [What is verified, and what is not yet](#what-is-verified-and-what-is-not-yet)
+9. [Limits](#limits)
+10. [Responsible use](#responsible-use)
+11. [Development](#development)
+12. [Documentation](#documentation)
+13. [Roadmap status](#roadmap-status)
 
 ---
 
-## Phase 10: docs, demo ও offline mode
-
-**Documentation:** উপরের চারটা document আর architecture diagram (`docs/architecture.svg`, হাতে লেখা SVG, তাই GitHub-এ আর slide-এ একইভাবে দেখায়)। Report আর viva-র প্রতিটা সংখ্যা ও দাবি code, test বা এই repo-তে চালানো output থেকে নেওয়া। যা এখনও আসল service দিয়ে যাচাই হয়নি, সেটা আলাদা করে লেখা আছে (REPORT §৭)।
-
-**`--offline` mode:** শুধু এই computer-এর source চলে: address-এর নিজের বিশ্লেষণ, GeoLite2 file, আর `update-lists` দিয়ে আগে নামানো list। বাকিরা "offline mode" বলে skip হয়। Test-এ fake network দিয়ে গোনা হয়েছে যে তখন একটাও HTTP request বা DNS query যায় না। দুটো কাজে লাগে:
-- Privacy: আপনি কোন address দেখছেন, কেউ জানতে পারে না।
-- Demo: Wi-Fi না থাকলেও চলে।
+## Quick start
 
 ```bash
-ipfinder --offline 8.8.8.8          # anycast চেনা যায় নিজস্ব table থেকে
-ipfinder serve --offline            # dashboard-ও
+git clone https://github.com/dipro20debnath/IP-Finder.git
+cd IP-Finder
+python -m venv .venv
+source .venv/bin/activate              # Windows: .venv\Scripts\activate
+python -m pip install -e ".[dev]"
+
+ipfinder 8.8.8.8                       # every layer, every source that needs no key
+ipfinder --offline 100.64.1.1          # nothing leaves your computer
+ipfinder lookup 8.8.8.8 1.1.1.1 -f html -o report.html   # report with a map
+ipfinder serve --open                  # the web dashboard
 ```
-
-`--offline`-এর সাথে `--active` দেওয়া যায় না (active মানেই target-এ packet)। `me`-ও চলে না, কারণ নিজের address জানতে ip-api লাগে।
-
-**Demo script:** `scripts/demo.py` ১১টা step-এ পুরো tool দেখায়। প্রতিটা step-এ title, কী দেখাতে হবে আর command দেখায়, তারপর Enter চাপলে চালায়।
-
-```bash
-python scripts/demo.py --check            # demo-র জন্য সব প্রস্তুত কিনা
-python scripts/demo.py                    # online (প্রায় ১০ মিনিট)
-python scripts/demo.py --offline          # internet ছাড়া, MaxMind-এর test database দিয়ে
-python scripts/demo.py --offline --yes --no-browser   # না থেমে রিহার্সাল
-```
-
-পুরো offline demo একটা test-এর অংশ (`tests/test_demo.py`)। সেখানে একটা অচল proxy দিয়ে চালানো হয়, যাতে কোনো network চেষ্টা হলে ধরা পড়ে। কী বলবেন আর কী দেখাবেন: [docs/DEMO.md](docs/DEMO.md)।
-
-**Demo বানাতে গিয়ে পাওয়া bug ঠিক করা হয়েছে:** `ipfinder --no-color lookup 8.8.8.8`-এর মতো command-এ option আগে দিলে "lookup" শব্দটাকেই IP হিসেবে ধরা হচ্ছিল। এখন command option-এর পরে এলেও চেনা যায়। `-f json`-এর মতো option-এর value কখনো command হিসেবে ধরা হয় না।
-
----
-
-## Phase 9: web dashboard (ঐচ্ছিক)
-
-```bash
-python -m pip install -e ".[web]"   # FastAPI + uvicorn, একবারই
-ipfinder serve                      # terminal-এ http://127.0.0.1:8000/#token=… link দেখায়
-ipfinder serve --open               # browser নিজেই খুলে দেয়
-ipfinder serve --allow-active       # page থেকে active probe (প্রতি lookup-এ phrase লাগবে)
-```
-
-Terminal-এ যে link আসে, সেটা browser-এ খুলুন। Page-এ যা আছে:
-
-- Address লেখার জায়গা। একবারে ১০০টা পর্যন্ত, প্রতি লাইনে একটা, `#` দিয়ে comment। File-ও load করা যায়, UTF-8 বা Windows PowerShell-এর UTF-16।
-- Profile বাছাই (quick / standard / full), আর একটা "My public IP" button।
-- ফল একটা একটা করে আসে, সব address শেষ হওয়ার অপেক্ষা করতে হয় না। সাথে progress bar থাকে। প্রতিটা address-এর card, map আর পুরো report আসে Phase 8-এর HTML report-এর **একই code** থেকে।
-- HTML report, CSV ও JSON download। Lookup আবার চালাতে হয় না, কারণ server শেষ ২০টা lookup মনে রাখে। তাই active probe দ্বিতীয়বার যায় না।
-- Data sources table: কোন source ready, কোনটার জন্য কী লাগবে।
-
-**একই engine:** CLI যে orchestrator, provider, cache আর rate limiter ব্যবহার করে, dashboard-ও ঠিক সেগুলোই ব্যবহার করে। Server চালু থাকা অবস্থায় একটাই session থাকে। ফলে ip-api-র 45/min limit সব tab আর সব lookup মিলিয়ে মানা হয়, আর downloaded list (Tor, cloud…) একবার load হওয়ার পর memory-তে থেকে যায়।
-
-**নিরাপত্তা, আর কেন দরকার:** Dashboard আপনার API key দিয়ে lookup চালায়, আর অনুমতি দিলে target-এ packet পাঠায়। তাই অন্য কেউ বা অন্য কোনো website যেন এটা ব্যবহার করতে না পারে:
-
-1. Default-এ শুধু `127.0.0.1`-এ শোনে, অর্থাৎ শুধু এই computer থেকে খোলা যায়। অন্য computer থেকে দেখাতে চাইলে `--host 0.0.0.0 --allowed-host <আপনার LAN IP>` দিন। তখন tool সতর্ক করে যে connection plain HTTP, তাই token আর ফল network-এ encryption ছাড়া যায়।
-2. প্রতিবার চালু হলে একটা নতুন random token তৈরি হয় (192 bit)। Token থাকে link-এর `#`-এর পরের অংশে, যা browser কখনো server-এ পাঠায় না। ফলে server log-এ token থাকে না। Page সেটা পড়ে address bar থেকে মুছে দেয়, আর প্রতিটা API call-এ header-এ পাঠায়। Token ছাড়া API `401` দেয়।
-3. Host header যাচাই করা হয়। কোনো website নিজের domain-কে `127.0.0.1`-এ point করে দিলেও (DNS rebinding) server উত্তর দেয় না (`400`)।
-4. অন্য site থেকে আসা request (Origin বা Sec-Fetch-Site header দেখে) `403` পায়। CORS নেই, তাই অন্য tab উত্তর পড়তেও পারে না।
-5. Active probe-এর শর্ত CLI-এর মতোই: server `--allow-active` দিয়ে চালু করতে হয়, প্রতিটা lookup-এ হুবহু `I AM AUTHORIZED` লিখতে হয়, সর্বোচ্চ ২০টা address, শুধু public। Test-এ যাচাই করা হয়েছে যে কোনো একটা শর্ত না মিললে probe পর্যন্ত কিছুই পৌঁছায় না।
-6. Content-Security-Policy: script শুধু এই server থেকে আসে। কোনো inline script বা `eval` নেই। Playwright-এর `wait_for_function`-ও এই নিয়মে আটকে গিয়েছিল, যা দেখায় নিয়মটা সত্যিই কাজ করে।
-7. Request body সর্বোচ্চ 256 KB। FastAPI-এর `/docs` বন্ধ, কারণ সেটা CDN থেকে script নামায়।
-
-Map-এর জন্য Phase 8-এর offline Leaflet আর Natural Earth data server নিজেই দেয়। OpenStreetMap-এর রাস্তার layer ঐচ্ছিক। Page `127.0.0.1` থেকে এলে OSM সেটা গ্রহণ করে কিনা নিশ্চিত নয়: forum-এর report পরস্পরবিরোধী, আর এই environment থেকে OSM-এ পৌঁছানোই যায়নি।
-
-**Browser-এ যাচাই:** `scripts/check_dashboard.py` (Playwright লাগে, ঐচ্ছিক) মানুষের মতো করেই পুরো কাজটা করে: `ipfinder serve` চালু করে, Chromium-এ link খোলে, address লিখে "Look up" চাপে, তারপর HTML report download করে আর token ছাড়া page খুলে দেখে। এই repo-তে চালানো ফল:
-
-```text
-status: Done: 2 address(es) in 1.5 s, 1 input(s) were not IP addresses.
-results: 2; maps: 2 of 2 drawn, 844 shapes
-download: ipfinder-20261010-091930.html, 407,610 characters
-without the token: the token form is shown
-OK
-```
-
-Page-এ কোনো error বা CSP violation হয়নি, আর dashboard ছাড়া অন্য কোনো server-এ request যায়নি। আলাদা করে browser-এ আরও যা দেখা হয়েছে:
-- Active mode-এ ভুল phrase দিলে "Nothing was sent", আর ঠিক phrase দিলে probe চলে।
-- UTF-16 file ঠিকভাবে load হয়।
-- 375 px চওড়া phone screen-এও layout ঠিক থাকে।
-
-**কোন version-এ চলে:** দুই প্রান্তেই test pass করেছে:
-- সবচেয়ে পুরোনো যেটা অনুমোদিত: FastAPI 0.115.0 + Starlette 0.38.6 + uvicorn 0.30.0, Python 3.10-এ।
-- এখনকার সর্বশেষ: FastAPI 0.143.0 + Starlette 1.7.0 + uvicorn 0.54.0।
-
-Starlette 1.7-এর TestClient এখন আলাদা `httpx2` package চায়। তাই test-এ httpx-এর নিজের ASGI transport ব্যবহার করা হয়েছে, নতুন কোনো dependency লাগেনি।
-
-![Web dashboard-এর উদাহরণ](docs/dashboard-example.png)
-
-*এই ছবিও MaxMind-এর official **test** database দিয়ে বানানো (81.2.69.142 → London), আসল GeoLite2 দিয়ে নয়। Online source সেই environment থেকে পৌঁছাতে পারেনি।*
-
----
-
-## Phase 8: reporting (CSV, HTML map, batch)
-
-```bash
-ipfinder lookup -f html -o report.html 8.8.8.8 1.1.1.1   # map সহ HTML report
-ipfinder lookup -f csv -o report.csv 8.8.8.8 1.1.1.1     # Excel-এর জন্য CSV
-ipfinder batch ips.txt -f html -o report.html            # file থেকে (প্রতি লাইনে একটা address, # = comment)
-```
-
-**HTML report:** একটাই file, browser-এ double-click করলেই খোলে। প্রতিটা address-এর জন্য:
-
-- উপরে কয়েকটা card: connection type, consensus location, location confidence, reputation, exposure, speed-of-light check (যেগুলো আছে)।
-- একটা interactive map:
-  - প্রতিটা source-এর point আলাদা রঙে (geofeed, Private Relay, MaxMind, ip-api, IPinfo Lite)।
-  - MaxMind-এর accuracy radius-এর বৃত্ত।
-  - একাধিক source থাকলে consensus point।
-  - `--active`-এর পরে আপনার অবস্থানের চারপাশে speed-of-light বৃত্ত। Address-টা আসলে এই বৃত্তের ভেতরেই থাকতে হবে।
-- Address anycast হলে সতর্কবার্তা, কারণ তখন point-গুলো database-এর মত, আপনি আসলে কোথায় পৌঁছান তা নয়।
-- নিচে "Full report": terminal-এর পুরো report, রঙ সহ।
-
-**Map কেন পুরোপুরি offline:** Leaflet 1.9.4 (BSD 2-Clause) আর Natural Earth 1:110m-এর দেশের সীমানা ও ২৪৩টা শহর (public domain) file-এর ভেতরেই রাখা। ফলে report খুললে কারো কাছে কোনো request যায় না, আর কে কোন address দেখছে তাও কেউ জানতে পারে না। চারটা address-এর একটা report প্রায় 450 KB। Plan-এ `folium` লেখা ছিল, কিন্তু সেটা ব্যবহার করা হয়নি, কারণ:
-
-1. folium 0.20.0-এর তৈরি HTML চারটা CDN থেকে Leaflet, jQuery, Bootstrap ও Font Awesome নামায়: cdn.jsdelivr.net, code.jquery.com, cdnjs.cloudflare.com আর netdna.bootstrapcdn.com। এটা folium-এর wheel খুলে দেখা হয়েছে।
-2. folium-এর জন্য `numpy`, `requests`, `jinja2`, `branca` আর `xyzservices` লাগে।
-3. OpenStreetMap-এর tile server Referer header ছাড়া request ফিরিয়ে দেয় ("Referer is required")। Disk থেকে খোলা (file://) page Referer পাঠাতে পারে না।
-4. CARTO-র basemap-এ এখন API key লাগে।
-
-OpenStreetMap-এর রাস্তার map তবুও একটা ঐচ্ছিক layer হিসেবে আছে। Report কোনো web server থেকে দেখালে সেটা চালু করা যায়।
-
-**নিরাপত্তা:** Address-এর নাম, AS name, hostname-এর মতো text network থেকে আসে, তাই ধরে নেওয়া হয় এগুলো ক্ষতিকর হতে পারে।
-
-- সব text HTML-escape করা হয়।
-- Map-এর label `textContent` দিয়ে বসানো হয়, কখনো HTML হিসেবে নয়।
-- Embedded data নিজের `<script>` block বন্ধ করতে পারে না।
-- Content-Security-Policy শুধু দুটো script চালাতে দেয়, তাদের SHA-256 hash দিয়ে: Leaflet আর map-এর নিজের script। অন্য কোনো script, form বা বাইরের connection চলে না। Test-এ `</script><img onerror=…>` ধরনের AS name দিয়ে এটা যাচাই করা হয়েছে।
-
-**CSV:** প্রতি address-এ একটা row, ৩৮টা column:
-
-- address type, connection type, consensus location ও confidence।
-- ASN, AS name, prefix, RPKI, registry-র নাম, abuse email, PTR।
-- Tor, Private Relay, cloud, VPN, datacenter list।
-- Reputation ও exposure score, খোলা port, সম্ভাব্য CVE, RTT, speed-of-light ফল।
-- কোন source সফল বা ব্যর্থ হলো।
-
-সব data চাইলে JSON ব্যবহার করুন। ভুল input-ও একটা row পায়, যেখানে `error` column-এ কারণ লেখা থাকে। Network থেকে আসা কোনো text `=`, `+`, `-` বা `@` দিয়ে শুরু হলে সামনে `'` বসানো হয়। এতে Excel বা LibreOffice সেটাকে formula হিসেবে চালায় না ("CSV injection")। আসল সংখ্যা, যেমন ঋণাত্মক longitude, সংখ্যাই থাকে। `-o` দিয়ে file-এ লিখলে শুরুতে UTF-8 BOM বসে, যাতে Excel "Linköping" বা বাংলা নাম ঠিকভাবে দেখায়।
-
-**Batch ও progress:** `ipfinder batch ips.txt` আর `ipfinder lookup -i ips.txt` একই কাজ করে। একাধিক address হলে stderr-এ একটা progress bar দেখায় (কতগুলো হলো, এখন কোনটা চলছে, কত সময় গেল)। Bar শুধু terminal-এ দেখায় আর শেষে মুছে যায়, তাই `> out.csv` বা pipe-এ কোনো প্রভাব পড়ে না। ip-api-র batch endpoint (এক request-এ ১০০টা address) Phase 2 থেকেই ব্যবহার হচ্ছে।
-
-**Browser-এ যাচাই:** `scripts/check_html_report.py` একটা report আসল Chromium-এ disk থেকে খোলে। তারপর দেখে প্রতিটা map আঁকা হয়েছে কিনা, page-এ কোনো error বা CSP violation আছে কিনা, আর কোনো network request গেছে কিনা। এর জন্য Playwright লাগে (ঐচ্ছিক)। এই repo-তে চালানো ফল: `maps: 2 of 2 drawn, 844 shapes`, কোনো error নেই, network request শূন্য।
-
-![HTML report-এর উদাহরণ](docs/html-report-example.png)
-
-*ছবিটা MaxMind-এর official **test** database দিয়ে বানানো (81.2.69.142 → London, 89.160.20.112 → Linköping), আসল GeoLite2 দিয়ে নয়। ip-api-র মতো online source সেই environment থেকে পৌঁছাতে পারেনি, তাই map-এ শুধু MaxMind-এর point আছে।*
-
----
-
-## Phase 7: active mode (শুধু অনুমতি থাকলে)
-
-এতক্ষণের সবকিছু passive: তৃতীয় পক্ষের database দেখা হয়, target কিছু টের পায় না। `--active` দিলে IP Finder সরাসরি target-এ packet পাঠায়। তাই এটা চলে শুধু নিচের সব শর্ত মিললে:
-
-1. `--active` দেওয়া হয়েছে। এটা ছাড়া active provider-গুলো "active probing is off" বলে skip হয়; test-এ যাচাই করা হয়েছে যে তখন কোনো probe চলে না।
-2. Plan-এর §9.1-এর সতর্কবার্তা দেখানো হয়, আর আপনাকে হুবহু `I AM AUTHORIZED` লিখতে হয়। Script-এ (terminal ছাড়া) আগে থেকে `--authorized` দিতে হয়, নাহলে কিছুই পাঠানো হয় না (exit code 2)।
-3. এক run-এ সর্বোচ্চ ২০টা address। এটা কয়েকটা system যাচাই করার জন্য, পুরো network sweep করার জন্য নয়।
-4. শুধু public address। LAN-এর (private) address-এ probe যায় না।
-
-| Probe | কী পাঠায় | কী জানায় |
-|---|---|---|
-| **RTT** | Port 443-এ (না পেলে 80-তে) ৪টা TCP handshake, আর system-এর `ping` দিয়ে ৪টা ICMP echo | সবচেয়ে কম round-trip time। Port বন্ধ থাকলেও (RST) সময় মাপা যায়। Windows-এ বন্ধ port-এর সময় বাদ দেওয়া হয়, কারণ Windows প্রায় এক সেকেন্ড ধরে আবার চেষ্টা করে |
-| **Traceroute** | System-এর `traceroute` / `tracert` / `tracepath`, সর্বোচ্চ ৩০ hop | পথের প্রতিটা router, তার network (ASN, prefix, registry-র দেশ; Team Cymru থেকে) |
-| **TLS certificate** | Port 443-এ একটা TLS handshake (দ্বিতীয়টা trust যাচাইয়ের জন্য) | Certificate-এ কোন কোন domain আছে (SAN), issuer, মেয়াদ, self-signed কিনা, আপনার system বিশ্বাস করে কিনা, SHA-256 আর crt.sh link |
-
-Port scan **ইচ্ছা করে রাখা হয়নি**: plan অনুযায়ী এটা শুধু লিখিত অনুমতিতে চলে, আর খোলা port Shodan InternetDB থেকে passively পাওয়া যায়। Certificate পড়তে IP Finder-এর নিজের ছোট X.509 reader আছে, কোনো নতুন dependency লাগেনি। Container-এর 128টা CA certificate-এ এটা CPython-এর নিজের decoder-এর সাথে হুবহু মিলেছে।
-
-**Speed-of-light check (plan-এর §5.6):** Fibre-এ আলো প্রতি millisecond-এ প্রায় 200 km যায়। তাই R ms round trip মানে address-টা আপনার থেকে **সর্বোচ্চ R/2 × 200 km** দূরে। Source-রা যে location বলছে সেটা এর চেয়ে দূরে হলে geolocation ভুল, নয়তো address-টা anycast। তখন location confidence থেকে −30 কাটা হয়। এর জন্য আপনার নিজের অবস্থান লাগে:
-- `.env`-এ `IPFINDER_LOCATION=23.8103,90.4125` দিলে সেটা ব্যবহার হয় (±10 km)।
-- না দিলে আপনার public IP-এর location ip-api থেকে নেওয়া হয় (±100 km)।
-
-**Transparent proxy ধরা (আসল অভিজ্ঞতা থেকে):** এই project যে environment-এ বানানো হয়েছে, সেখানে একটা egress gateway সব port-443 connection নিজেই গ্রহণ করে। এমনকি `203.0.113.77`-এর মতো address-এও, যার internet-এ কোনো অস্তিত্বই নেই। তারপর নিজের certificate দেখায় ("Egress Gateway SDS Issuing CA")। কোনো যাচাই না থাকলে IP Finder 0.5 ms RTT আর একটা ভুয়া certificate-কে target-এর বলে দেখাত। Corporate firewall, antivirus-এর HTTPS scanning, captive portal-ও এই একই কাজ করে। তাই TCP বা TLS ফল বিশ্বাস করার আগে IP Finder `192.0.2.1`-এ (RFC 5737-এর documentation address, internet-এ কখনো route হয় না) একটা handshake চেষ্টা করে। কেউ উত্তর দিলে বোঝা যায় পথে কেউ সবার হয়ে উত্তর দিচ্ছে। তখন TCP সময় বাদ দেওয়া হয় (ping থাকলে শুধু ping ব্যবহার হয়), আর certificate দেখানোর বদলে বলা হয় যে সেটা proxy-র।
-
-### আসল output: interception আছে এমন network থেকে
-
-```text
-$ ipfinder --active --authorized 8.8.8.8
-[!] Active mode sends packets directly to the target (TCP handshakes on ports 443/80, ping, traceroute, a TLS handshake).
-    Only scan systems you own or have written permission to test.
-    --authorized given: continuing.
-│   rtt (L10)          error: a proxy or firewall on your network answers TCP port 443 itself (it even
-│                      answers for 192.0.2.1, an address that cannot exist); ping: the ping command is
-│                      not installed; so the round trip cannot be measured
-│   traceroute (L10)   error: traceroute / tracepath is not installed
-│   tls-cert (L10)     error: a proxy or firewall on your network answers TCP port 443 itself (it even
-│                      answers for 192.0.2.1, an address that cannot exist), so any certificate would
-│                      be the proxy's, not the target's
-```
-
-সাধারণ বাড়ি বা অফিসের network থেকে ping, traceroute আর certificate ঠিকভাবে আসবে। Local TCP server আর test certificate দিয়ে চালানো TLS server-এর বিরুদ্ধে প্রতিটা probe test করা হয়েছে। Ping আর traceroute-এর parser test করা হয়েছে Linux, macOS ও Windows-এর (জার্মান ভাষার Windows সহ) output-এর format মেনে লেখা sample দিয়ে। এই environment-এ ping বা traceroute নেই, তাই আসল output দিয়ে প্রথমবার চালানো হবে আপনার computer-এ।
-
----
-
-## Phase 6: analysis engine (verdict ও score)
-
-এখন report-এর শুরুতেই একটা **Verdict** অংশ আসে। এখানে সব source মিলিয়ে চারটা উত্তর দেওয়া হয়, আর প্রতিটা উত্তরের সাথে কোন নিয়মে কত point যোগ বা বিয়োগ হলো তা দেখানো হয় ("why")। এগুলো probability নয়, স্বচ্ছ নিয়ম।
-
-**১. Connection type** (প্রথম যে নিয়ম মেলে, সেটাই; plan-এর §5.3):
-
-| ক্রম | Signal | Label |
-|---|---|---|
-| 1 | Tor Project-এর list | Anonymizer: Tor exit relay |
-| 2 | Apple-এর Private Relay list | Privacy relay (VPN নয়) |
-| 3 | Anycast (নিচে দেখুন) | Anycast service |
-| 4 | Hosting signal + VPN/proxy signal | Likely VPN or proxy on a hosting network |
-| 5 | Hosting signal: cloud range, ip-api `hosting`, X4BNet datacenter list, AbuseIPDB "Data Center", PeeringDB "Content", hostname | Hosting / cloud |
-| 6 | VPN/proxy signal, hosting ছাড়া | Possible VPN or proxy |
-| 7 | Mobile: ip-api `mobile`, AbuseIPDB "Mobile ISP", hostname | Mobile network (প্রায়ই CGNAT) |
-| 8 | Hostname-এ `pool`, `dsl`, `dyn`… | Residential broadband |
-| 9–12 | PeeringDB / AbuseIPDB-এর network type | Education, Government, Business, ISP access network |
-
-প্রতিটা label-এর সাথে প্রমাণ থাকে, আর বলা থাকে সেটা প্রকাশিত list থেকে এসেছে (তথ্য) নাকি flag বা hostname থেকে (অনুমান)। Source-গুলো একে অপরের সাথে না মিললে (যেমন ip-api বলে "mobile", AbuseIPDB বলে "Data Center") বাকি signal-গুলোও "other signals" হিসেবে দেখায়, লুকায় না।
-
-**২. Anycast:** পরিচিত anycast public DNS (Google 8.8.8.8, Cloudflare 1.1.1.1, Quad9 9.9.9.9, OpenDNS-এর IPv4 ও IPv6), Cloudflare-এর range, AWS Global Accelerator (AWS নিজেই এগুলোকে "static anycast IP" বলে) → নিশ্চিত। Fastly-র range → "সম্ভবত"। Anycast হলে location শুধু দেশ পর্যন্ত দেখায়, কারণ address-টা একসাথে অনেক জায়গা থেকে চলে।
-
-**৩. Location consensus ও confidence:**
-- দেশ: weighted vote। Operator-এর নিজের geofeed আর Apple-এর Private Relay list ৩ ভোট, database-গুলো ১ ভোট।
-- শহর: জেতা দেশের ভেতরে যে শহর সবচেয়ে বেশি source বলে।
-- Spread: যেকোনো দুটো source-এর মধ্যে সবচেয়ে বেশি দূরত্ব। MaxMind-এর নিজের accuracy radius এর চেয়ে বড় হলে সেটাই ধরা হয়। ঢাকা থেকে চট্টগ্রাম = 214 km (test-এ যাচাই করা)।
-
-| নিয়ম | Point |
-|---|---|
-| Spread > 500 km / > 100 km | −40 / −25 |
-| শুধু একটা source coordinate দিয়েছে (মিলিয়ে দেখার কিছু নেই) | −10 |
-| কোনো source coordinate দেয়নি | −20 |
-| Source-রা দেশ নিয়ে একমত নয় | −20 |
-| Hosting / data centre (location server-এর, user-এর নয়) | −30 |
-| Anonymizer: Tor, VPN (আসল user যেকোনো জায়গায়) | −50 |
-| Private Relay (Apple শুধু user-এর মোটামুটি এলাকা রাখে) | −20 |
-| Mobile network (operator-এর gateway) | −20 |
-| Anycast | −60 |
-| RTT অসম্ভব (Phase 7-এর `--active`) | −30 |
-| Operator-এর geofeed consensus দেশের সাথে মেলে | +10 |
-
-৭০ বা তার বেশি হলে High, ৪০–৬৯ Medium, ৪০-এর কম Low। Plan-এর উদাহরণ (বাংলাদেশি mobile IP, source-দের মধ্যে 214 km পার্থক্য) → 100 − 25 − 20 = **55 Medium**। এটা test-এ আছে।
-
-**৪. Reputation ও exposure** (plan-এর §5.5; দুটো আলাদা প্রশ্ন, তাই কখনো যোগ করা হয় না):
-
-| Reputation-এর নিয়ম | Point |
-|---|---|
-| AbuseIPDB confidence × 0.4 | সর্বোচ্চ +40 |
-| GreyNoise: malicious | +25 |
-| VirusTotal: প্রতি malicious engine | +5, সর্বোচ্চ +25 |
-| Spamhaus ZEN (PBL বাদে), ThreatFox, URLhaus, Feodo, Spamhaus DROP-এর যেকোনোটায় listing | +20 (একবারই) |
-| Tor exit (ঝুঁকির সংকেত, অপরাধ নয়) | +10 |
-| GreyNoise RIOT (পরিচিত ভালো service) | −30 |
-
-| Exposure-এর নিয়ম (Shodan InternetDB) | Point |
-|---|---|
-| প্রতিটা খোলা port | +2, সর্বোচ্চ +20 |
-| প্রতিটা প্রায়ই-আক্রান্ত service (Telnet, SMB, RDP, Redis…) | +15, সর্বোচ্চ +45 |
-| প্রতিটা সম্ভাব্য CVE | +5, সর্বোচ্চ +35 |
-
-দুটো score-এর label একই: 0 = কিছু পাওয়া যায়নি, 1–29 Low, 30–59 Medium, 60 বা তার বেশি High। Score-এর পাশে লেখা থাকে কতগুলো source থেকে হিসাব হয়েছে। শুধু offline list দেখা হয়ে থাকলে মনে করিয়ে দেয় যে `--profile full` আরও source যোগ করে। কোনো source না চললে score দেখানোই হয় না, কারণ "0" মানে পরিষ্কার, "জানা নেই" নয়।
-
-### আসল ও test data দিয়ে output (সংক্ষেপিত)
-
-প্রথম তিনটা আসল data থেকে: AWS-এর live list, আর MaxMind-এর official test database। শেষেরটা Phase 5-এর documentation-উদাহরণ থেকে (আসল address-এর data নয়)।
-
-```text
-$ ipfinder 3.80.1.1
-│ Verdict
-│   Connection type   Hosting / cloud: Amazon Web Services  (from published lists)
-│     evidence        cloud-ranges: Amazon Web Services us-east-1 EC2; vpn-lists: listed as a datacenter network
-
-$ ipfinder 8.8.8.8
-│   Connection type   Anycast service (Google Public DNS)  (from published lists)
-│     evidence        8.8.8.0/24 is Google Public DNS, a documented anycast service
-
-$ ipfinder 81.2.69.142          # MaxMind test database
-│   Location (consensus)   London, GB  (MaxMind radius 10 km)
-│   Location confidence    90/100 HIGH
-│     why                  only one source gave coordinates, nothing to cross-check (-10)
-
-$ ipfinder --profile full 1.2.3.4      # documentation examples, not real data
-│   Connection type        Hosting / cloud  (estimate from flags, hostnames or network type)
-│     evidence             abuseipdb: Data Center/Web Hosting/Transit
-│     other signals        mobile (ip-api: mobile)
-│   Reputation             100/100 HIGH  (from 6 source(s))
-│     why                  AbuseIPDB confidence 100/100 (x0.4) (+40); GreyNoise classifies it as
-│                          malicious (+25); VirusTotal: 3 engine(s) say malicious (5 each) (+15);
-│                          listed by Spamhaus ZEN, ThreatFox, URLhaus (+20)
-│   Exposure               48/100 MEDIUM  (from 1 source(s))
-│     why                  4 open port(s) (2 each) (+8); often-attacked services exposed: 23 Telnet,
-│                          3389 RDP (15 each) (+30); 2 possible CVE(s) (5 each) (+10)
-```
-
-JSON output-এ সবকিছু `verdict` অংশে থাকে (`connection`, `anycast`, `location`, `location_confidence`, `reputation`, `exposure`, প্রতিটার `breakdown` সহ)।
-
----
-
-## Phase 5: threat intelligence
-
-**কেন শুধু `--profile full`-এ:** এই source-গুলো চালালে address-টা ৭টা তৃতীয় পক্ষের কাছে যায়, আর বেশিরভাগের free quota ছোট (VirusTotal দিনে 500টা, GreyNoise সপ্তাহে 50টা)। তাই সাধারণ lookup-এ এগুলো চলে না; চালাতে হয় `ipfinder --profile full <ip>` দিয়ে। Key না থাকলে source-টা "no API key (... in .env)" দেখিয়ে skip হয়, কখনো crash করে না।
-
-| Source | কী বলে | Key (সব free) | সীমা |
-|---|---|---|---|
-| **AbuseIPDB** | Abuse confidence score (0–100), গত 90 দিনে কতবার, কতজন report করেছে, কী কারণে (Brute-Force, SSH, Port Scan…), usage type | `ABUSEIPDB_API_KEY` | দিনে 1,000 check; বাকি quota report-এ থাকে |
-| **GreyNoise Community** | Internet-জুড়ে scan করছে কিনা ("noise"), নাকি পরিচিত ভালো service ("RIOT", যেমন Google Public DNS); benign / malicious / unknown | ঐচ্ছিক `GREYNOISE_API_KEY` | Key ছাড়া দিনে অল্প কয়েকটা, free account-এ সপ্তাহে 50টা। শুধু IPv4 (GreyNoise-এর নিজের SDK IPv6 নেয় না) |
-| **VirusTotal** | ~90টা security vendor-এর engine-এর মধ্যে কতগুলো malicious/suspicious বলছে, কোন engine কী বলছে, community vote | `VIRUSTOTAL_API_KEY` | মিনিটে 4টা (IP Finder নিজেই মানে), দিনে 500টা; non-commercial |
-| **AlienVault OTX** | কতগুলো threat "pulse"-এ address-টা আছে, সাম্প্রতিক pulse-এর নাম ও malware family, allow-list-এ থাকলে সেটাও | `OTX_API_KEY` | — |
-| **ThreatFox** (abuse.ch) | Malware C2 IOC: কোন malware, কোন port, confidence | `ABUSECH_AUTH_KEY` | 30 June 2025 থেকে key বাধ্যতামূলক |
-| **URLhaus** (abuse.ch) | Address থেকে malware ছড়ানো URL, কতগুলো এখনও online (URL "defang" করে দেখায়: `hxxp://`) | `ABUSECH_AUTH_KEY` | একই key |
-| **Spamhaus ZEN** (DNS) | SBL (spam source), CSS, XBL (infected/hijacked device), DROP, PBL | ঐচ্ছিক `SPAMHAUS_DQS_KEY` | Free শুধু কম পরিমাণ, non-commercial query-র জন্য |
-
-**Key ছাড়াই চলে, `standard` profile-এও (local list, কাউকে address পাঠায় না):** `ipfinder update-lists` এখন এগুলোও নামায়:
-
-| List | কী বলে |
-|---|---|
-| **Feodo Tracker** (abuse.ch) | Botnet C2 server কিনা (Dridex, Emotet, QakBot…), কোন port, শেষ কবে online। Takedown-এর পর list প্রায় খালি থাকতে পারে, সেটাও বৈধ |
-| **Spamhaus DROP / DROPv6 / ASN-DROP** | Hijack হওয়া বা অপরাধীদের চালানো netblock আর পুরো network (ASN দিয়ে মেলায়) |
-
-**Spamhaus-এর উত্তর ঠিকভাবে পড়া** (code-গুলো Spamhaus-এর নিজের SpamAssassin rules থেকে নেওয়া):
-
-| উত্তর | মানে |
-|---|---|
-| `127.0.0.2` | SBL: পরিচিত spam source বা spam operation |
-| `127.0.0.3` | CSS: কম-reputation-এর bulk mail sender |
-| `127.0.0.4`–`7` | XBL: infected বা hijacked device (bot, open proxy) |
-| `127.0.0.9` | DROP: অপরাধীদের netblock |
-| `127.0.0.10` / `11` | **PBL: home বা dynamic line, যেখান থেকে সরাসরি mail যাওয়ার কথা নয়। এটা abuse-এর চিহ্ন নয়** |
-| `127.255.255.254` | **Listing নয়:** query public resolver (8.8.8.8, 1.1.1.1) দিয়ে গেছে, Spamhaus উত্তর দিতে অস্বীকার করেছে |
-
-আগে RFC 5782-এর test entry (`2.0.0.127.zen.spamhaus.org`) জিজ্ঞেস করা হয়। সেটা উত্তর না দিলে আপনার DNS Spamhaus পর্যন্ত পৌঁছায় না, তখন IP Finder "not listed" বলে না, সমস্যাটা জানায়। DQS key DNS query-র নামের ভেতরে থাকে, তাই কোনো error বার্তায় query-র নাম লেখা হয় না।
-
-**সৎ সীমাবদ্ধতা:**
-- Listing মানে কেউ এই address থেকে কিছু দেখেছে বা report করেছে, কে করেছে তা নয়। CGNAT, VPN, cloud-এর মতো ভাগ করা address অন্যদের ইতিহাস বয়ে বেড়ায়।
-- VirusTotal-এ ১–২টা engine flag করা খুব সাধারণ ব্যাপার; কোন engine কী বলছে দেখুন।
-- OTX pulse আর AbuseIPDB report সাধারণ user-দের লেখা। IP Finder report-এর comment রাখে না, শুধু category আর তারিখ রাখে।
-- সব source মিলিয়ে reputation score Verdict অংশে দেখায় (Phase 6); নিচে প্রতিটা source-এর নিজের উত্তরও থাকে।
-
-### Test data দিয়ে output (সংক্ষেপিত)
-
-এখানে সংখ্যাগুলো documentation-এর উদাহরণ থেকে, **আসল address-এর data নয়**। এই environment থেকে এই service-গুলোতে পৌঁছানো যায় না।
-
-```text
-$ ipfinder --profile full 1.2.3.4
-│ Threat reputation
-│   AbuseIPDB           score 100/100 - 2 report(s) from 2 reporter(s) in 90 days, last 2018-12-20
-│     reported for      Brute-Force (2), SSH (1)
-│   GreyNoise           malicious - scanning the internet, last seen 2026-10-08
-│   VirusTotal          3 of 94 engines say malicious, 1 suspicious (analysed 2026-10-08)
-│     flagged by        EngineA (malware), EngineC (phishing), engineB (suspicious)
-│   OTX pulses          2
-│                       QakBot C2 servers [QakBot]
-│   ThreatFox           QakBot - Indicator that identifies a botnet command&control server (C&C)
-│                       (1.2.3.4:443, confidence 100%)
-│   URLhaus             3 malware URL(s), 1 online, first seen 2026-09-01
-│                       hxxp://1.2.3.4/bins/mozi.m (online)
-│   Spamhaus ZEN        XBL: Exploits Block List: an infected or hijacked device (bot, open proxy)
-│   Spamhaus ZEN        PBL (Spamhaus): Policy Block List: an end-user (often dynamic) range
-│                       that should not send mail directly; this is not a sign of abuse
-```
-
-> **যাচাইয়ের অবস্থা:** প্রতিটা source-এর format নেওয়া হয়েছে তার নিজের documentation বা official code থেকে: AbuseIPDB-এর check উদাহরণ, GreyNoise-এর README, OTX-এর Python SDK, abuse.ch-এর নিজের sample script ও Elastic-এর abuse.ch integration, Spamhaus-এর SpamAssassin rules। আসল service-এর বিরুদ্ধে প্রথমবার চালানো হবে আপনার computer-এ।
-
----
-
-## Phase 4: anonymity, hosting ও exposed service
-
-| Source | কী দেয় | কোথা থেকে | কত ঘন ঘন বদলায় |
-|---|---|---|---|
-| **Tor exit list** | Address-টা Tor exit relay কিনা, relay-র fingerprint, শেষ কবে exit হিসেবে দেখা গেছে, Tor Relay Search link | Tor Project: `torbulkexitlist` ও `exit-addresses` | প্রতি ঘণ্টায় (৬ ঘণ্টার পুরোনো হলে সতর্ক করে) |
-| **iCloud Private Relay** | Apple-এর egress address কিনা, আর Apple কোন এলাকার user-দের জন্য সেটা ব্যবহার করে | Apple: `egress-ip-ranges.csv` (RFC 8805) | Apple নিয়মিত বদলায় |
-| **Cloud / CDN range** | AWS (region ও service যেমন EC2), Google Cloud (region), Google-এর নিজস্ব service, Azure (region ও service tag), Oracle Cloud, Cloudflare, Fastly | প্রতিটা কোম্পানির নিজের প্রকাশ করা list | দিনে বা সপ্তাহে |
-| **VPN / datacenter list** | পরিচিত VPN provider-এর network (যেমন M247, Mullvad, ProtonVPN-এর ASN) আর datacenter network (home বা mobile line নয়) | [X4BNet lists_vpn](https://github.com/X4BNet/lists_vpn) (MIT licence): IPv4 block আর ASN list (ASN দিয়ে IPv6-ও ধরা পড়ে) | মাঝে মাঝে |
-| **Shodan InternetDB** | খোলা port, software (CPE), সম্ভাব্য CVE, tag, hostname; ঝুঁকিপূর্ণ port (Telnet, SMB, RDP, VNC, Redis, MongoDB…) আলাদা করে দেখায় | `internetdb.shodan.io/{ip}`, key লাগে না | Shodan সাপ্তাহিক update করে |
-
-**List download করা:** Lookup নিজে কখনো বড় list download করে না। সেটা করে আলাদা command:
-
-```bash
-ipfinder update-lists              # সব list (আর .env-এ MaxMind key থাকলে GeoLite2-ও)
-ipfinder update-lists tor-exits    # শুধু একটা
-ipfinder update-lists --force      # তাজা হলেও আবার নামাও
-ipfinder update-lists --status     # কোনটা আছে, কত পুরোনো
-```
-
-- Download করা file আগে পুরোপুরি parse করে যাচাই করা হয়, তারপর পুরোনোটার জায়গায় বসে। ফলে error page বা আধা-নামা file কখনো ভালো list নষ্ট করে না।
-- যে list তাজা (যেমন Tor ৩০ মিনিটের কম পুরোনো, AWS ১২ ঘণ্টার কম), `--force` ছাড়া সেটা আবার নামানো হয় না।
-- Azure-এর file-এর নাম প্রতি সপ্তাহে বদলায়, তাই Microsoft-এর download page থেকে আসল link খুঁজে নেওয়া হয়। Page-এর গঠন বদলালে পরিষ্কার error দেখায়।
-- **MaxMind:** `.env`-এ `MAXMIND_ACCOUNT_ID` আর `MAXMIND_LICENSE_KEY` থাকলে GeoLite2 City ও ASN download হয়। পদ্ধতিটা MaxMind-এর নিজের `geoipupdate` tool-এর source code মিলিয়ে বানানো। নতুন build না থাকলে (MD5 মিলে গেলে) কিছু নামায় না, আর download-এর checksum মিলিয়ে দেখে।
-
-**সৎ সীমাবদ্ধতা:**
-- Tor-এর list-এ IPv6 address নেই, তাই IPv6 Tor exit চেনা যায় না। Report-এ সেটা বলা থাকে।
-- VPN list community-র বানানো। List-এ থাকা মানে "এই network VPN হিসেবে পরিচিত", কোনো নির্দিষ্ট connection VPN দিয়ে এসেছে তার প্রমাণ নয়। List-এ নেই এমন VPN ধরা পড়ে না।
-- Private Relay VPN নয়। একটা egress address অনেক Apple user ভাগ করে নেয়।
-- InternetDB-র CVE-এর মধ্যে software version দেখে অনুমান করা (unverified) CVE-ও আছে, আর data সাপ্তাহিক snapshot, live নয়। InternetDB শুধু non-commercial কাজে free।
-
-### আসল output (সংক্ষেপিত): AWS ও X4BNet-এর live list দিয়ে
-
-এই environment থেকে AWS-এর `ip-ranges.json` (17,570 prefix) আর X4BNet-এর list সত্যিই download করা গেছে। নিচের ফল সেই আসল list থেকে। Tor, Apple, Google, Azure, Oracle, Cloudflare, Fastly আর Shodan-এর server এখান থেকে পৌঁছানো যায়নি, তাই সেগুলোর code test হয়েছে documentation-এর format দিয়ে।
-
-```text
-$ ipfinder update-lists aws vpn-networks datacenter-networks vpn-asns datacenter-asns
-│ aws                 │ 17,570  │ 2026-10-09 15:37:06 UTC │ 2026-10-09 19:16 UTC (0 h ago) │ updated │
-│ vpn-networks        │ 11,054  │ -                       │ 2026-10-09 19:16 UTC (0 h ago) │ updated │
-│ datacenter-networks │ 44,471  │ -                       │ 2026-10-09 19:16 UTC (0 h ago) │ updated │
-
-$ ipfinder 3.80.1.1
-│ Anonymity and hosting (local lists)
-│   Cloud / CDN          Amazon Web Services - us-east-1 - EC2 (3.80.0.0/12)
-│   Listed VPN network   no
-│   Listed datacenter    yes - 3.64.0.0/10
-
-$ ipfinder 2.26.157.1
-│   Listed VPN network   yes - 2.26.157.0/24
-│   Listed datacenter    yes - 2.26.157.0/24
-```
-
----
-
-## Phase 3: registry, routing ও DNS
-
-| Source | কী দেয় | Key | সীমা ও শর্ত |
-|---|---|---|---|
-| **RDAP** (RFC 9083) | Network-এর নাম ও handle, registered range ও CIDR, কার নামে registered, allocation type, registration ও last-changed তারিখ, parent block, **abuse e-mail ও phone**, geofeed link | লাগে না | কোন RIR-কে জিজ্ঞেস করতে হবে তা IANA bootstrap file (RFC 9224) থেকে বের করে; সেটা না পেলে `rdap.org`। LACNIC: 10/min, বাকি server-এ ভদ্রভাবে 30/min |
-| **RIPEstat** | BGP-তে announced কিনা, prefix ও origin AS, **RPKI status**, কতগুলো RIS peer prefix-টা দেখে, প্রথম/শেষ কবে BGP-তে দেখা গেছে, পাশের AS-গুলো, abuse e-mail | লাগে না | একসাথে সর্বোচ্চ ৮টি request (IP Finder ৫টির বেশি পাঠায় না); `sourceapp=ip-finder` |
-| **Reverse DNS** | PTR hostname, **forward-confirmed** কিনা (FCrDNS), hostname থেকে ইঙ্গিত (home line, mobile, cloud, hosting, mail server...) | লাগে না | নিজের DNS resolver |
-| **Geofeed** (RFC 8805 / 9632) | Network operator নিজে যে location প্রকাশ করে: দেশ, ISO 3166-2 region, শহর | লাগে না | শুধু HTTPS, file ≤ 10 MB; RDAP record-এ link থাকলে তবেই চলে |
-
-**RPKI status-এর মানে:**
-
-| Status | মানে |
-|---|---|
-| `valid` | একটি ROA এই origin AS-কে এই prefix announce করার অনুমতি দেয় |
-| `invalid_asn` | কোনো ROA এই origin AS-কে অনুমতি দেয় না: hijack বা ভুল configuration হতে পারে |
-| `invalid_length` | Announce করা prefix ROA-র max length-এর চেয়ে বেশি specific |
-| `unknown` | কোনো ROA এই route cover করে না (RPKI দিয়ে সুরক্ষিত নয়; এটা ভুল নয়) |
-
-- **Abuse contact:** RDAP আর RIPEstat দুই জায়গা থেকেই e-mail নিয়ে মিলিয়ে দেখায়, কোনটা কোন source থেকে এসেছে সহ। Attack বা spam-এর report সেখানেই পাঠাতে হয়; কোন customer address-টা ব্যবহার করেছিল, তা শুধু network operator জানে।
-- **FCrDNS কেন:** Reverse zone যার হাতে, সে যেকোনো নাম বসাতে পারে (এমনকি `mail.google.com`)। নামটা আবার resolve করে একই address পাওয়া গেলে তবেই নামটা বিশ্বাসযোগ্য। Mail server-গুলো ঠিক এটাই যাচাই করে।
-- **Hostname-এর ইঙ্গিত শুধু ইঙ্গিত:** `pool-71-...fios.verizon.net` বা `ec2-...amazonaws.com` জাতীয় নাম থেকে network-এর ধরন আন্দাজ করা যায়, কিন্তু operator নাম ইচ্ছেমতো রাখতে পারে। `tor1` জাতীয় নাম প্রায়ই Toronto বোঝায়, তাই একা "tor" শব্দকে Tor ধরা হয় না।
-- **Geofeed-এর নিয়ম (RFC 9632):** File-এর কোনো entry তখনই ব্যবহার হয়, যখন সেটা geofeed-এর link দেওয়া registered network-এর ভেতরে পড়ে। নাহলে যে কেউ অন্যের address-এর location লিখে দিতে পারত। HTTP-তে redirect হলে download বাতিল হয়। RPKI signature থাকলে জানায়, কিন্তু যাচাই করে না।
-- **Terminal নিরাপত্তা:** Registry remark, hostname বা API বার্তায় terminal control character (যেমন ESC) থাকলে তা `\x1b` হিসেবে দেখায়, কখনো terminal-কে নিয়ন্ত্রণ করতে দেয় না।
-- **সৎ বার্তা:** DNS resolver সব নামকে "নেই" বললে reverse DNS "PTR নেই" বলে না; আগে একটা সবসময়-থাকা PTR record দিয়ে যাচাই করে। RIPEstat-এর কোনো একটা অংশ fail করলে বাকিটা দেখায়, কী বাদ গেল তা জানায়, আর সেই অসম্পূর্ণ ফল cache করে না।
-
-### Test data দিয়ে output (সংক্ষেপিত)
-
-এখানে RDAP অংশের field-গুলো ARIN-এর 8.8.8.8 record-এর গঠন মেনে বানানো। কিন্তু RIPEstat-এর সংখ্যা (330 of 333 peer, neighbour সংখ্যা) আর geofeed **উদাহরণ মাত্র, আসল data নয়**। এই environment থেকে বাইরের internet-এ যাওয়া যায় না।
-
-```text
-│ Routing and RPKI (RIPEstat)
-│   BGP                     announced as 8.8.8.0/24 by AS15169 (GOOGLE - Google LLC)
-│   RPKI (AS15169)          valid - a ROA authorises this origin AS for this prefix
-│                           (ROA 8.8.8.0/24 max /24 AS15169)
-│   Visibility              330 of 333 RIS peers (99%)
-│   Busiest upstream side   AS1299, AS174, AS3356
-│ Registration (RDAP)
-│   Network name      GOGL (NET-8-8-8-0-2)
-│   Registered to     Google LLC (GOGL)
-│   Range             8.8.8.0 - 8.8.8.255
-│   Allocation type   DIRECT ALLOCATION
-│   Registered        2023-12-28
-│   Registry          ARIN (rdap.arin.net)
-│ Abuse contact
-│   E-mail   network-abuse@google.com  (rdap, ripestat)
-│ Reverse DNS
-│   PTR                 dns.google
-│   Forward-confirmed   yes - dns.google resolves back to this address
-```
-
-> **যাচাইয়ের অবস্থা:** RDAP, RIPEstat, reverse DNS আর Geofeed-এর code RFC ও প্রতিটি service-এর documentation-এ দেওয়া response format দিয়ে test করা হয়েছে (fake HTTP ও fake DNS দিয়ে)। আসল service-এর বিরুদ্ধে প্রথমবার চালানো হবে আপনার computer-এ।
-
----
-
-## Phase 2: location ও network
-
-| Source | কী দেয় | Key / file | সীমা ও শর্ত |
-|---|---|---|---|
-| **ip-api** | দেশ, অঞ্চল, শহর, ZIP, lat/lon, timezone, ISP, org, ASN, reverse DNS, mobile/proxy/hosting flag | লাগে না | 45 req/min (single), batch 100টি IP × 15 req/min; free tier শুধু HTTP, non-commercial |
-| **IPinfo Lite** | দেশ, মহাদেশ, ASN, AS name ও domain | `IPINFO_TOKEN` (free) | Unlimited (IPinfo-র দাবি) |
-| **MaxMind GeoLite2** | শহর, lat/lon **± accuracy radius**, timezone, registered country, ASN | `data/GeoLite2-City.mmdb`, `data/GeoLite2-ASN.mmdb` (free account) | Offline; database-এর build date report-এ দেখায় |
-| **Team Cymru** | BGP-তে announce করা prefix, origin ASN, RIR, allocation date, AS name | লাগে না (DNS) | Fair use |
-| **PeeringDB** | ASN-টা কেমন network: ISP / Content / Education, scope, peering policy | ঐচ্ছিক `PEERINGDB_API_KEY` | ASN জানা গেলে তবেই চলে |
-
-- **Cache:** online উত্তর `data/cache.sqlite`-এ জমা থাকে (reverse DNS ১ ঘণ্টা, RIPEstat ৬ ঘণ্টা, ip-api, IPinfo, Team Cymru, Geofeed ও InternetDB ১ দিন, RDAP, RDAP bootstrap ও PeeringDB ৭ দিন; local list-এর ফল cache হয় না, সবসময় সর্বশেষ list থেকে আসে), তাই একই IP বারবার দেখলে free quota খরচ হয় না।
-- **Rate limiter:** ip-api-র ৪৫/মিনিট সীমা কখনো পার হয় না। নিরাপত্তার জন্য ০.৫ সেকেন্ড margin রাখা আছে, আর `X-Rl`/`X-Ttl` header ও HTTP 429 মানা হয়। একাধিক IP দিলে ip-api-র batch endpoint ব্যবহার হয়।
-- **একাধিক source পাশাপাশি:** দেশ বা ASN নিয়ে source-গুলো একমত না হলে সতর্কবার্তা দেখায়। MaxMind-এর "registered country" আর "location country" আলাদা হলেও জানায়।
-- **Map ও সময়:** OpenStreetMap ও Google Maps link (accuracy radius থাকায় MaxMind-কে প্রাধান্য), আর ওই এলাকার এখনকার local time।
-- **নিরাপত্তা:** IPinfo-র token URL-এ যায়, তাই কোনো error বার্তা বা report-এ URL লেখা হয় না।
-- **সৎ বার্তা:** DNS blocked থাকলে Team Cymru "not announced" বলে না; আগে যাচাই করে বলে যে DNS-এ সমস্যা।
-
-### আসল output (সংক্ষেপিত): MaxMind-এর test database দিয়ে
-
-```text
-$ ipfinder 89.160.20.112
-│ Location (approximate)                                                       │
-│   Source    Country       City / Region             Coordinates              │
-│   maxmind   Sweden (SE)   Linköping, Östergötland   58.4167, 15.6167 (±76    │
-│                           County                    km)                      │
-│   Registered in      Germany (DE) - the owner's country differs from where   │
-│                      the IP is used                                          │
-│   Map (maxmind)      https://www.openstreetmap.org/?mlat=58.4167&mlon=15.6   │
-│                      167#map=11/58.4167/15.6167                              │
-│   Local time there   2026-10-09 19:14 (Europe/Stockholm, UTC+02:00)          │
-│ Network                                                                      │
-│   Source    ASN       AS name        ISP / Org   Prefix          Registry    │
-│   maxmind   AS29518   Bredband2 AB   -           89.160.0.0/17   -           │
-│ Sources                                                                      │
-│   ip-api (L2/L3/L7)     error: cannot reach ip-api.com (ConnectError)        │
-│   ipinfo-lite (L2/L3)   skipped: no API key (IPINFO_TOKEN in .env)           │
-│   maxmind (L2/L3)       ok (0 ms)                                            │
-│   team-cymru (L3)       error: your DNS resolver cannot reach                │
-│                         asn.cymru.com (blocked or filtered), so BGP origin   │
-│                         is unknown                                           │
-```
-
-এই output এমন একটা environment-এ নেওয়া, যেখানে বাইরের internet বন্ধ ছিল। তাই ip-api আর Team Cymru-র অংশে error দেখাচ্ছে, আর MaxMind-এর ফল এসেছে MaxMind-এর নিজস্ব *test* database থেকে (এই data আসল internet-এর নয়)। আপনার computer-এ সব source একসাথে দেখা যাবে।
-
-> **যাচাইয়ের অবস্থা:** ip-api, IPinfo, PeeringDB আর Team Cymru-র code প্রতিটা provider-এর documentation-এ দেওয়া response format দিয়ে test করা। আসল API-র বিরুদ্ধে প্রথমবার চালানো হবে আপনার computer-এ (`python scripts/capture_fixtures.py`)। MaxMind অংশ MaxMind-এর official test database দিয়ে test করা।
-
----
-
-## Phase 1: offline analysis
-
-| বিষয় | উদাহরণ |
-|---|---|
-| Validation ও পরিষ্কার error | `010.1.1.1` → leading zero ambiguous, inet_aton পড়ে `8.1.1.1` (CVE-2021-29921); `0x7f000001` → hex রূপ, আসলে `127.0.0.1`; `http://017700000001/` → leading zero, browser পড়ে `127.0.0.1`; URL-এর `\`, tab বা control character browser-এর নিয়মে পড়া হয়; `8.8.8.0/24` → CIDR, single IP নয়; `google.com` → hostname |
-| Flexible input | `8.8.8.8:53`, `[2001:db8::1]:443`, `https://8.8.8.8/x`, `fe80::1%eth0`, integer `134744072`, **বাংলা সংখ্যা `৮.৮.৮.৮`** |
-| IANA special-purpose classification | `100.64.1.1` → Shared Address Space (CGNAT), RFC 6598; `3fff::1` → Documentation, RFC 9637 |
-| Online lookup চলবে কি না, কোন IP-তে | Private/CGNAT → না; `2002:808:808::1` (6to4) → embedded `8.8.8.8` |
-| Representations | Integer, hex, binary, reverse-DNS name, IPv4-mapped IPv6, 6to4 prefix |
-| IPv4 details | Historic class (A/B/C/D/E), multicast block, **GLOP থেকে AS number** (RFC 3180); 6to4 prefix শুধু public IPv4-এর জন্য (RFC 3056) |
-| IPv6 embedded IPv4 | IPv4-mapped, NAT64 (RFC 6052), 6to4, **Teredo client IP + port + flags** (RFC 4380/5991) |
-| IPv6 interface ID | **EUI-64 → MAC address → vendor** (group-bit যাচাই সহ), IANA-reserved ID (RFC 5453, Proxy Mobile IPv6), ISATAP, subnet-router ও RFC 2526 anycast, manual, random/privacy |
-| IPv6 structure | /32, /48, /56, /64 prefix ও interface ID |
-| IPv6 multicast | Scope (link/site/global…), flags, well-known group, solicited-node |
-
-### কেন নিজস্ব IANA table? (বাস্তব পরীক্ষার ফল)
-
-Python-এর `ipaddress.is_global` সব জায়গায় IANA registry-র সাথে মেলে না। Python version ভেদে ফলও বদলায়। এই repo-তে Python 3.10.20, 3.11.17, 3.12.3, 3.13.16 ও 3.14.6-এ পরীক্ষা করে পাওয়া গেছে:
-
-| Address | IANA / RFC অনুযায়ী | Python `is_global` |
-|---|---|---|
-| `5f00::1` | SRv6 SID (RFC 9602), globally reachable **নয়** | `True` (সব version) |
-| `2001:1::3` | DNS-SD SRP anycast (RFC 9665), globally reachable | `False` (সব version) |
-| `fec0::1` | Site-local, RFC 3879-এ বাতিল; IANA address-space registry-তে reserved | `True` (সব version) |
-| `4000::1` | `2000::/3`-এর বাইরে, unallocated | `True` (সব version) |
-| `::808:808` | IPv4-compatible, deprecated (RFC 4291) | `True` (সব version) |
-| `100:0:0:1::1` | Dummy IPv6 Prefix (RFC 9780, 2025), globally reachable **নয়** | `True` (সব version) |
-| `192.88.99.2` | 6a44-relay anycast (RFC 6751), globally reachable **নয়** | `True` (সব version) |
-| `3fff::1` | Documentation (RFC 9637) | 3.12.3-এ `True`; বাকিগুলোতে `False` |
-
-তাই IP Finder IANA registry থেকে নিজস্ব table (`ipfinder/core/special_ranges.py`, 2025-10-09-এর registry অনুযায়ী) ব্যবহার করে। Python যেখানে ভিন্ন কথা বলে, report-এ সেটা জানায় (`-v` দিলে Python-এর সব flag দেখায়)।
-
-একই কারণে IPv4-mapped address-এর লেখাও (`::ffff:8.8.8.8`) tool নিজে বানায়। CPython 3.12.3 এটা `::ffff:808:808` লেখে, আর 3.10.20/3.11.17/3.13+ লেখে `::ffff:8.8.8.8`।
 
 ---
 
 ## Installation
 
+**Requirements:** Python **3.10 or newer** on Windows, macOS or Linux.
+
 ```bash
 git clone https://github.com/dipro20debnath/IP-Finder.git
 cd IP-Finder
-python3 -m venv .venv
-source .venv/bin/activate          # Windows: .venv\Scripts\activate
-python -m pip install -e ".[dev]"
+python -m venv .venv
+source .venv/bin/activate              # Windows (PowerShell or cmd): .venv\Scripts\activate
 ```
 
-শুধু ব্যবহার করতে চাইলে `python -m pip install -e .` যথেষ্ট। Web dashboard (Phase 9) লাগলে `python -m pip install -e ".[web]"` দিন; `[dev]`-এ এটা আগে থেকেই আছে।
+Then install one of these:
 
-Python **3.10 বা নতুন** লাগবে। Runtime dependency: `rich` (terminal output), `httpx` (HTTP), `dnspython` (Team Cymru-র DNS), `maxminddb` (GeoLite2 file পড়া), আর Windows-এ `tzdata` (time zone)।
+| Command | What you get |
+|---|---|
+| `python -m pip install -e .` | The command-line tool |
+| `python -m pip install -e ".[web]"` | The tool and the web dashboard (FastAPI, uvicorn) |
+| `python -m pip install -e ".[dev]"` | Everything, plus the test tools (pytest, ruff) |
 
-ঐচ্ছিক, তবে ভালো ফলের জন্য দরকারি: MaxMind GeoLite2 database (free account লাগে); কীভাবে নামাবেন তা [data/README.md](data/README.md)-তে আছে। IPinfo Lite-এর free token `.env`-এ `IPINFO_TOKEN=` হিসেবে বসান (`.env.example` দেখুন)।
+**Dependencies:**
+- `rich`: terminal output.
+- `httpx`: HTTP.
+- `dnspython`: DNS lookups.
+- `maxminddb`: reads GeoLite2 files.
+- `tzdata`: Windows only, for time zones.
 
-ঐচ্ছিক: EUI-64 MAC-এর vendor নাম দেখাতে IEEE OUI list নামাতে পারেন:
+**Optional extras that make results better** (all explained in [Level 4](#level-4-more-sources-keys-geolite2-lists)):
+- Free MaxMind GeoLite2 databases, for city-level location with an accuracy radius.
+- The downloaded lists, for Tor, cloud, VPN and Private Relay checks: `ipfinder update-lists`.
+- Free API keys in a `.env` file.
+
+**Run it from the project folder.** `.env`, the `data/` folder (databases, lists, cache) are read relative to the folder you run `ipfinder` from. To run it from anywhere, set the paths in `.env` (see [Settings reference](#settings-reference)).
+
+Without activating the virtual environment you can also run `python -m ipfinder ...` with the venv's Python.
+
+---
+
+## Usage guide: basic to advanced
+
+### Level 1: first lookups
+
+```bash
+ipfinder 8.8.8.8                       # "lookup" can be left out
+ipfinder lookup 8.8.8.8 2001:4860:4860::8888   # several addresses at once
+ipfinder me                            # your own public IP (asks ip-api)
+ipfinder                               # no argument: asks you for an address
+```
+
+IP Finder accepts addresses in the forms people actually copy and paste. These were all tested:
+
+| You type | It looks up |
+|---|---|
+| `8.8.8.8:53` | 8.8.8.8 (port removed) |
+| `[2001:4860:4860::8888]:443` | 2001:4860:4860::8888 |
+| `https://1.1.1.1/dns-query` | 1.1.1.1 (taken from the URL) |
+| `134744072` | 8.8.8.8 (an address written as one integer) |
+| `৮.৮.৮.৮` | 8.8.8.8 (Bengali digits) |
+| `fe80::1%eth0` | fe80::1 (link-local, with a zone) |
+
+It does **not** guess when input is ambiguous. It explains instead:
+
+```text
+$ ipfinder lookup 010.1.1.1 0x7f000001 google.com
+[!] '010.1.1.1': Leading zero in octet '010' of '010.1.1.1' is ambiguous
+    hint: some software reads it as octal (e.g. inet_aton reads it as 8.1.1.1;
+CVE-2021-29921); remove leading zeros
+[!] '0x7f000001': '0x7f000001' is a non-standard (hex/octal/shorthand) IPv4 form
+    hint: inet_aton-style software reads it as 127.0.0.1; write it as dotted
+decimal
+[!] 'google.com': 'google.com' looks like a hostname, not an IP address
+    hint: IP Finder takes IP addresses only; find the name's address first, e.g.
+with 'nslookup'
+```
+
+**Exit codes:**
+
+| Code | Meaning |
+|---|---|
+| `0` | Success |
+| `1` | At least one input was not a valid IP; or `me` could not find your IP; or a list download failed |
+| `2` | Usage error: bad option, unreadable input file, unwritable output file, port in use, or active mode not confirmed |
+| `3` | Internal error |
+| `130` | Stopped with Ctrl+C |
+
+The report goes to **stdout**. Prompts, progress and error messages go to **stderr**. So `ipfinder -f json 8.8.8.8 > out.json` always produces valid JSON.
+
+### Level 2: reading a report
+
+The terminal report is a set of sections. A section is only shown when it has something to say.
+
+| Section | What it tells you |
+|---|---|
+| **Summary** | The address, its type (from IANA's special-purpose registry), whether it is globally reachable, and which address the online sources were asked about |
+| **Verdict** | The combined answer: connection type, anycast, location consensus, location confidence, reputation and exposure. Each score has a `why` line listing every rule that added or removed points |
+| **Location (approximate)** | Each source's country, city and coordinates side by side, MaxMind's accuracy radius, map links and the local time there |
+| **Representations**, **IPv4 details** | Integer, hex, binary, reverse-DNS name, IPv4-mapped IPv6, historic class |
+| **Embedded IPv4**, **Interface identifier** | IPv4 hidden inside IPv6 (6to4, Teredo with port, NAT64), and a MAC address from EUI-64 |
+| **Network**, **Network type (PeeringDB)** | ASN, AS name, ISP, prefix, registry, and what kind of network it is |
+| **Registration (RDAP)**, **Abuse contact** | Who the block is registered to, range, dates, and where to report abuse |
+| **Routing and RPKI (RIPEstat)** | Whether the prefix is announced in BGP, by which AS, and whether RPKI says that is valid |
+| **Reverse DNS** | The PTR name, and whether it is forward-confirmed (FCrDNS) |
+| **Anonymity and hosting (local lists)** | Tor exit, iCloud Private Relay, cloud/CDN range, listed VPN or datacenter network |
+| **Exposed services (Shodan InternetDB)** | Open ports, software, possible CVEs |
+| **Threat reputation** | AbuseIPDB, GreyNoise, VirusTotal, OTX, ThreatFox, URLhaus, Spamhaus (full profile only) |
+| **Active probes** | Round trip, traceroute, TLS certificate (only with `--active`) |
+| **Sources** | Every source with `ok`, `skipped` (and why) or `error` (and why). One failing source never stops the others |
+
+A real example, using MaxMind's official **test** database (not real GeoLite2 data):
+
+```text
+│ Verdict                                                                      │
+│   Connection type        Unknown                                             │
+│   Location (consensus)   London, GB  (MaxMind radius 10 km)                  │
+│   Location confidence    90/100 HIGH                                         │
+│     why                  only one source gave coordinates, nothing to        │
+│                          cross-check (-10)                                   │
+```
+
+**Location confidence** starts at 100, and rules take points away or add them, for example:
+- −25 when the sources are over 100 km apart.
+- −20 for a mobile network.
+- −60 for anycast.
+- +10 when the operator's own geofeed agrees.
+
+70 and over is High, 40–69 Medium, under 40 Low. These are transparent rules, not probabilities; the full table is in [docs/REPORT.md](docs/REPORT.md) §5.4.
+
+**Reputation** (has something bad come from this address?) and **exposure** (what is open on it?) are separate scores and are never added together. When no source could be asked, no score is shown, because "0" means "nothing found", not "not checked".
+
+Add `-v` to also see Python's own `ipaddress` flags and every IANA range the address falls in.
+
+### Level 3: files, batches and output formats
+
+**Many addresses from a file:** put one per line; `#` starts a comment.
+
+```bash
+ipfinder batch ips.txt                 # same as: ipfinder lookup -i ips.txt
+cat ips.txt | ipfinder lookup          # from stdin
+```
+
+- Files may be UTF-8 (with or without BOM) or UTF-16, the format Windows PowerShell often writes.
+- With two or more addresses in a terminal, a progress bar shows on stderr and disappears when done.
+- ip-api's batch endpoint (100 addresses per request) is used automatically.
+
+**Output formats** (`-f`) and files (`-o`):
+
+```bash
+ipfinder lookup -f json 8.8.8.8                        # everything, machine-readable
+ipfinder lookup -f csv -o report.csv 8.8.8.8 1.1.1.1   # one row per address
+ipfinder lookup -f html -o report.html 8.8.8.8 1.1.1.1 # report with a map
+ipfinder batch ips.txt -f html -o report.html
+```
+
+| Format | Best for | Details |
+|---|---|---|
+| `text` (default) | Reading | Coloured panels; text from the network can never control your terminal (control characters are shown escaped). `--no-color` turns colours off |
+| `json` | Programs | Every source's raw data, the summary and the verdict with each score's breakdown |
+| `csv` | Excel, spreadsheets | 38 columns, one row per address; invalid inputs get a row with the reason in `error`. Text that starts with `=`, `+`, `-` or `@` gets a leading `'` so Excel never runs it as a formula. With `-o`, a UTF-8 BOM is added so Excel shows names like "Linköping" correctly |
+| `html` | Sharing, presenting | One self-contained file: an interactive map (each source's point, MaxMind's accuracy circle, the consensus point) and the full report. The map library and country outlines are inside the file, so it opens without internet and contacts nobody |
+
+Output files are written to a temporary file first and then renamed, so a failed write never destroys an existing report.
+
+### Level 4: more sources (keys, GeoLite2, lists)
+
+Run `ipfinder sources` to see every source, whether it is ready, and what it needs.
+
+**1. API keys.** Copy `.env.example` to `.env` and fill in only the keys you have. Every key is optional, and the keys stay on your computer (`.env` is git-ignored).
+
+| Key | Source | Free tier (as documented by each provider) |
+|---|---|---|
+| `IPINFO_TOKEN` | IPinfo Lite: country, ASN | Free, unlimited |
+| `MAXMIND_ACCOUNT_ID`, `MAXMIND_LICENSE_KEY` | Lets `update-lists` download GeoLite2 for you | Free account |
+| `PEERINGDB_API_KEY` | PeeringDB: higher limits | Optional |
+| `ABUSEIPDB_API_KEY` | AbuseIPDB: abuse score and reports | About 1,000 checks a day |
+| `GREYNOISE_API_KEY` | GreyNoise: internet scanner or known-good service | Optional; IPv4 only; free account 50 lookups a week |
+| `VIRUSTOTAL_API_KEY` | VirusTotal: security vendors' verdicts | 4 a minute, 500 a day, non-commercial |
+| `OTX_API_KEY` | AlienVault OTX: threat pulses | Free account |
+| `ABUSECH_AUTH_KEY` | ThreatFox and URLhaus | Free; mandatory since 30 June 2025 |
+| `SPAMHAUS_DQS_KEY` | Spamhaus ZEN blocklists | Free for low-volume, non-commercial use; needed if your DNS resolver is a public one such as 8.8.8.8 |
+
+The threat-intelligence keys are only used with `--profile full` (see [Level 5](#level-5-profiles-privacy-and-offline-mode)).
+
+**2. MaxMind GeoLite2** (city, coordinates and accuracy radius, offline). Create a free MaxMind account, then either:
+- put `MAXMIND_ACCOUNT_ID` and `MAXMIND_LICENSE_KEY` in `.env` and run `ipfinder update-lists maxmind`, or
+- download "GeoLite2 City" and "GeoLite2 ASN" in MaxMind DB (`.mmdb`) format and put them in `data/`.
+
+Details: [data/README.md](data/README.md).
+
+**3. Downloaded lists.** A lookup never downloads big files itself; this command does:
+
+```bash
+ipfinder update-lists                  # all lists (and GeoLite2 when the MaxMind key is set)
+ipfinder update-lists tor-exits aws    # only some
+ipfinder update-lists --status         # what is there and how old it is
+ipfinder update-lists --force          # download even if still fresh
+```
+
+The available names are:
+- **Tor:** `tor-exits`, `tor-exit-addresses`
+- **Cloud and CDN:** `aws`, `google-cloud`, `google`, `azure`, `oracle`, `cloudflare`, `fastly`
+- **Apple:** `private-relay`
+- **VPN and datacenter (X4BNet):** `vpn-networks`, `datacenter-networks`, `vpn-asns`, `datacenter-asns`
+- **Threat lists:** `feodo`, `spamhaus-drop-v4`, `spamhaus-drop-v6`, `spamhaus-asndrop`
+- **MaxMind:** `maxmind`
+
+Every download is parsed and validated before it replaces the old file, so an error page or a half-finished download never spoils a good list. The Tor lists change hourly (the report warns when they are over 6 hours old); the others change daily or weekly.
+
+**4. MAC vendor names** (optional). For the vendor behind an EUI-64 IPv6 address, download IEEE's list:
 
 ```bash
 curl -L -o data/oui.csv https://standards-oui.ieee.org/oui/oui.csv
 ```
 
----
+**Cache.** Online answers are stored in `data/cache.sqlite`, so looking at the same address again costs no quota. How long each answer is kept:
 
-## ব্যবহার
+| Source | Kept for |
+|---|---|
+| Reverse DNS | 1 hour |
+| RIPEstat | 6 hours |
+| ip-api, IPinfo, Team Cymru, Geofeed, InternetDB | 1 day |
+| RDAP, PeeringDB | 7 days |
+| Local lists and GeoLite2 | Never cached (always read fresh) |
 
-```bash
-ipfinder 8.8.8.8                          # "lookup" না লিখলেও চলে
-ipfinder lookup 8.8.8.8 2001:4860:4860::8888
-ipfinder lookup "৮.৮.৮.৮"                  # বাংলা সংখ্যা
-ipfinder lookup -v 2001:1::1              # Python flags ও সব matching range সহ
-ipfinder lookup -f json 8.8.8.8           # JSON output
-ipfinder lookup -f json -o report.json 8.8.8.8
-ipfinder lookup -f csv -o report.csv 8.8.8.8 1.1.1.1    # CSV (Excel-এ খোলে)
-ipfinder lookup -f html -o report.html 8.8.8.8          # map সহ HTML report (offline-এ খোলে)
-ipfinder lookup -i ips.txt -f json        # file থেকে (প্রতি লাইনে একটি IP, # = comment)
-ipfinder batch ips.txt -f csv -o out.csv  # একই কাজ, progress bar সহ
-cat ips.txt | ipfinder lookup -f json     # stdin থেকে
-ipfinder lookup --profile quick 8.8.8.8   # শুধু offline + ip-api (দ্রুত)
-ipfinder lookup --profile full 8.8.8.8    # + threat intelligence (key লাগে, address তৃতীয় পক্ষে যায়)
-ipfinder lookup --active 8.8.8.8          # + RTT, traceroute, TLS certificate (অনুমতি নিয়ে)
-ipfinder lookup --active --authorized -i mine.txt   # script-এ: আগে থেকে অনুমতি নিশ্চিত
-ipfinder lookup --no-cache 8.8.8.8        # cache না পড়ে, না লিখে
-ipfinder --offline 8.8.8.8                # শুধু local source; কিছুই বাইরে যায় না
-ipfinder me                               # নিজের public IP
-ipfinder sources                          # প্রতিটা source প্রস্তুত কি না, কী লাগবে
-ipfinder update-lists                     # Tor, cloud, Private Relay, VPN list (+ GeoLite2)
-ipfinder update-lists --status            # কোন list আছে, কত পুরোনো
-ipfinder serve                            # browser-এর জন্য web dashboard (".[web]" লাগে)
-ipfinder cache info                       # cache-এ কী আছে
-ipfinder cache clear                      # cache মুছে ফেলা
-ipfinder                                  # v1.0-এর মতো interactive prompt
-python -m ipfinder 8.8.8.8                # repo folder থেকে, rich install থাকলে
-```
-
-**Exit codes:** `0` সফল, `1` অন্তত একটি input বৈধ IP নয় (বা `me` নিজের IP খুঁজে পায়নি, বা `update-lists`-এ কোনো list নামানো যায়নি), `2` usage ভুল (ভুল option, input file পড়া যায়নি, output file লেখা যায়নি, `serve`-এর জন্য FastAPI নেই বা port ব্যস্ত), `3` internal error, `130` Ctrl+C।
-
-Report যায় **stdout**-এ। Prompt, status ও error বার্তা যায় **stderr**-এ, তাই `ipfinder -f json > out.json` সবসময় বৈধ JSON দেয়। Input file UTF-8 (BOM সহ বা ছাড়া) বা UTF-16 হতে পারে, যেমন Windows PowerShell-এর তৈরি file।
-
-**কোন folder থেকে চালাবেন:** `.env`, `data/` folder-এর database আর `data/cache.sqlite` **যে folder থেকে command চালাচ্ছেন সেখান থেকে** পড়া হয় (সাধারণত repo-র root)। অন্য জায়গা থেকে চালালে `IPFINDER_MAXMIND_CITY_DB`, `IPFINDER_MAXMIND_ASN_DB`, `IPFINDER_OUI_DB`, `IPFINDER_CACHE`, `IPFINDER_LISTS_DIR` দিয়ে path দিন।
-
-### আসল output (সংক্ষেপিত): Teredo address থেকে লুকানো client IP ও port
-
-```text
-$ ipfinder 2001:0:4136:e378:8000:63bf:f7f7:f7f7
-╭─ IP Finder 2.0.0a1 - 2001:0:4136:e378:8000:63bf:f7f7:f7f7 ───────────────────╮
-│ Summary                                                                      │
-│   Address                2001:0:4136:e378:8000:63bf:f7f7:f7f7  (IPv6)        │
-│   Type                   Teredo  [2001::/32, RFC 4380]                       │
-│   Globally reachable     n/a (see RFC)                                       │
-│   Online lookup target   8.8.8.8  (Using the IPv4 address embedded in this   │
-│                          Teredo address (teredo_client, RFC 4380, RFC        │
-│                          5991))                                              │
-│ ...                                                                          │
-│ Embedded IPv4 (teredo_client)                                                │
-│   IPv4                    8.8.8.8                                            │
-│   Role                    client's public (NAT) IPv4                         │
-│   Client port             40000                                              │
-│   Flags                   0x8000                                             │
-│   Cone bit (deprecated)   True                                               │
-│   RFC 5991 random bits    False                                              │
-│ Embedded IPv4 (teredo_server)                                                │
-│   IPv4                 65.54.227.120                                         │
-│   Role                 Teredo server                                         │
-╰──────────────────────────────────────────────────────────────────────────────╯
-```
-
-### আসল output (সংক্ষেপিত): IPv6 address থেকে device-এর MAC
-
-```text
-$ ipfinder fe80::21a:2bff:fe3c:4d5e%eth0
-│   Type                   Link-Local Unicast  [fe80::/10, RFC 4291]           │
-│   Online lookup target   not applicable: Link-Local Unicast (RFC 4291) is    │
-│                          not globally reachable, so public geolocation and   │
-│                          registry data do not apply                          │
-│ Interface identifier                                                         │
-│   Type          eui64                                                        │
-│   MAC address   00:1a:2b:3c:4d:5e                                            │
-│   OUI           00:1a:2b                                                     │
-│   Privacy       This MAC can identify and track the same device across       │
-│                 networks                                                     │
-```
-
----
-
-## Project structure
-
-```text
-IP-Finder/
-├── ipfinder/
-│   ├── cli.py                  # argparse CLI (lookup, batch, me, sources, cache, update-lists, serve; --active gate; progress bar)
-│   ├── core/
-│   │   ├── validator.py        # input → validated address, helpful errors
-│   │   ├── text.py             # version-independent IPv6 text, safe display of input
-│   │   ├── inputs.py           # lines → addresses (# comments, UTF-8/UTF-16 files)
-│   │   ├── special_ranges.py   # IANA special-purpose tables + longest-prefix classify
-│   │   ├── models.py           # ProviderResult, IPReport
-│   │   ├── config.py           # .env + environment, API keys, paths, profile
-│   │   ├── session.py          # one run: HTTP client, DNS, cache, rate limiters
-│   │   ├── cache.py            # memory + SQLite cache with per-provider TTL
-│   │   ├── ratelimit.py        # sliding-window limiter + server-driven pauses
-│   │   ├── http.py             # JSON requests, capped downloads; errors never contain the URL/token
-│   │   ├── errors.py           # ProviderError (shared, no imports)
-│   │   ├── dns.py              # TXT / PTR / A / AAAA lookups (dnspython)
-│   │   └── orchestrator.py     # stage 0 offline → stage 1 sources → stage 2 (PeeringDB, Geofeed)
-│   ├── providers/
-│   │   ├── base.py             # Provider interface (profile, key, files, cache, limits)
-│   │   ├── offline.py          # L1
-│   │   ├── ipapi.py            # ip-api single + batch
-│   │   ├── ipinfo_lite.py      # IPinfo Lite
-│   │   ├── maxmind.py          # GeoLite2 City + ASN (.mmdb)
-│   │   ├── cymru.py            # Team Cymru IP-to-ASN over DNS
-│   │   ├── peeringdb.py        # PeeringDB network type
-│   │   ├── rdap.py             # RDAP: IANA bootstrap, registration, abuse contact
-│   │   ├── ripestat.py         # RIPEstat: BGP, RPKI, visibility, neighbours, abuse
-│   │   ├── reverse_dns.py      # PTR + forward-confirmed reverse DNS
-│   │   ├── geofeed.py          # operator-published location (RFC 8805 / 9632)
-│   │   ├── list_base.py        # base for providers that answer from downloaded lists
-│   │   ├── tor.py              # Tor exit relay check
-│   │   ├── private_relay.py    # iCloud Private Relay egress check
-│   │   ├── cloud_ranges.py     # AWS / Google / Azure / Oracle / Cloudflare / Fastly
-│   │   ├── vpn_lists.py        # X4BNet VPN and datacenter networks (by prefix and ASN)
-│   │   ├── internetdb.py       # Shodan InternetDB: ports, CPEs, possible CVEs
-│   │   ├── abuseipdb.py        # AbuseIPDB score, reports, categories
-│   │   ├── greynoise.py        # GreyNoise Community: noise / RIOT
-│   │   ├── virustotal.py       # VirusTotal engine verdicts (4/min limiter)
-│   │   ├── otx.py              # AlienVault OTX pulses
-│   │   ├── abusech.py          # ThreatFox + URLhaus (Auth-Key)
-│   │   ├── spamhaus.py         # Spamhaus ZEN over DNS (RFC 5782 test entry first)
-│   │   ├── threat_lists.py     # Feodo Tracker + Spamhaus DROP (offline)
-│   │   ├── active.py           # --active only: rtt, traceroute, tls-cert (stage 3)
-│   │   ├── common.py           # shared normalisation helpers
-│   │   └── __init__.py         # registry + planned providers (Phase 7)
-│   ├── active/
-│   │   ├── probes.py           # TCP round trip, ping, traceroute, TLS grab, proxy check
-│   │   └── x509.py             # small DER reader for certificates (no dependency)
-│   ├── lists/
-│   │   ├── specs.py            # every downloadable list: URL, format, parser, freshness
-│   │   ├── index.py            # longest-prefix lookup (300k prefixes load in ~1-1.5 s, lookups in microseconds)
-│   │   ├── store.py            # data/lists/: safe replace-after-validate downloads + metadata
-│   │   └── maxmind.py          # GeoLite2 download (same protocol as geoipupdate)
-│   ├── analysis/
-│   │   ├── addressing.py       # representations, IPv4 class, multicast, Python flags
-│   │   ├── ipv6_insights.py    # embedded IPv4, EUI-64/ISATAP, structure, multicast
-│   │   ├── oui.py              # IEEE OUI vendor lookup
-│   │   ├── hostname.py         # hints from a reverse-DNS name
-│   │   ├── offline.py          # combines L1 + online-lookup decision
-│   │   ├── summary.py          # per-source facts: map pin, local time, abuse contacts
-│   │   ├── geo.py              # haversine, weighted country/city vote, spread
-│   │   ├── anycast.py          # known anycast services, Cloudflare / Global Accelerator
-│   │   ├── classify.py         # connection-type decision tree with evidence
-│   │   ├── scoring.py          # location confidence, reputation, exposure (with breakdown)
-│   │   ├── rtt.py              # speed-of-light check (200 km per ms in fibre)
-│   │   └── verdict.py          # the analysis engine: everything above in one verdict
-│   ├── output/
-│   │   ├── terminal.py         # rich panels (no markup parsing, control characters escaped)
-│   │   ├── json_out.py
-│   │   ├── csv_out.py          # one row per address; formula-injection guard
-│   │   ├── html_report.py      # self-contained report: map, cards, terminal export, strict CSP
-│   │   └── assets/             # Leaflet 1.9.4 + Natural Earth 1:110m, shared map script and styles
-│   └── web/                    # Phase 9 (optional, ".[web]")
-│       ├── app.py              # FastAPI app: token, Host/Origin checks, streamed lookups, downloads
-│       └── static/             # index.html, app.js, app.css (no inline script)
-├── scripts/
-│   ├── capture_fixtures.py     # Phase 0: record real API responses for tests
-│   ├── build_world_map.py      # Phase 8: rebuild assets/world-110m.json from Natural Earth
-│   ├── check_html_report.py    # Phase 8: open a report in Chromium (Playwright) and check the map
-│   ├── check_dashboard.py      # Phase 9: start the dashboard and use it in Chromium
-│   └── demo.py                 # Phase 10: the guided demo (online or --offline)
-├── docs/                       # architecture, report, demo, viva; screenshots
-├── tests/                      # pytest; runs offline (fake HTTP + DNS)
-│   └── data/maxmind/           # MaxMind's official test databases (MIT licence)
-├── data/                       # downloaded databases + cache (git-ignored)
-├── .env.example                # every API key and path setting
-└── .github/workflows/ci.yml    # lint + tests on Python 3.10–3.14
-```
-
----
-
-## Tests
+Errors are never stored on disk, so the next run tries again.
 
 ```bash
+ipfinder cache info                    # where the cache is and what is in it
+ipfinder cache clear                   # delete it
+ipfinder lookup --no-cache 8.8.8.8     # neither read nor write the cache
+```
+
+### Level 5: profiles, privacy and offline mode
+
+Each lookup sends the address to some outside services. You choose how many:
+
+| Mode | What runs | Who sees the address |
+|---|---|---|
+| `--offline` | Address analysis, GeoLite2 files, downloaded lists | **Nobody.** Tests count zero HTTP requests and zero DNS queries |
+| `--profile quick` | Address analysis and ip-api | ip-api. Its free tier is plain HTTP, so anyone on the path could see it |
+| `--profile standard` (default) | Every source that needs no threat-intelligence key | ip-api, IPinfo (with a token), Team Cymru (via your DNS resolver), the right Regional Internet Registry (RDAP), RIPEstat, Shodan InternetDB. Reverse DNS reaches the address owner's DNS server through your resolver |
+| `--profile full` | Also AbuseIPDB, GreyNoise, VirusTotal, OTX, ThreatFox, URLhaus, Spamhaus | All of the above and seven threat-intelligence services; this is why it is not the default |
+
+```bash
+ipfinder --offline 8.8.8.8             # anycast is still recognised from a built-in table
+ipfinder --profile quick 8.8.8.8       # fast, one outside service
+ipfinder --profile full 8.8.8.8        # adds threat intelligence (needs keys)
+```
+
+- `--offline` cannot be combined with `--active` (active means sending packets).
+- `me` does not work offline, because it has to ask ip-api.
+- For private, CGNAT, link-local and other non-public addresses, no online source is asked at all, whatever the mode.
+
+The full table, taken from the code: [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
+
+### Level 6: active probes
+
+Everything so far is passive: the target never notices. `--active` sends packets **directly to the target**. Use it only on systems you own or have written permission to test.
+
+```bash
+ipfinder --active 8.8.8.8                       # asks you to type the confirmation phrase
+ipfinder lookup --active --authorized -i mine.txt   # in scripts: confirm in advance
+```
+
+This is what you see if the answer is not the exact phrase (real output):
+
+```text
+[!] Active mode sends packets directly to the target (TCP handshakes on ports 443/80, ping, traceroute, a TLS handshake).
+    Only scan systems you own or have written permission to test.
+    Type 'I AM AUTHORIZED' to continue: yes please
+[!] Not confirmed. Nothing was sent.
+```
+
+| Probe | What it sends | What it tells you |
+|---|---|---|
+| Round trip (RTT) | 4 TCP handshakes to port 443 (else 80), and 4 pings with your system's `ping` | The lowest round-trip time, even if the port is closed |
+| Traceroute | Your system's `traceroute`, `tracert` or `tracepath`, up to 30 hops | Each router on the path and its network (via Team Cymru) |
+| TLS certificate | A TLS handshake on port 443 | Names on the certificate, issuer, validity, self-signed or trusted, SHA-256 and a crt.sh link |
+
+**Rules:**
+- Nothing is sent without `--active` and the phrase. Without a terminal to ask in, `--authorized` is required, or the exit code is 2.
+- At most 20 addresses per run.
+- Public addresses only.
+- No port scan.
+
+**Speed-of-light check:** light in fibre covers about 200 km per millisecond, so a round trip of R ms puts the address at most R/2 × 200 km away from you. If the sources claim a location farther than that, the location is wrong (or the address is anycast), and confidence loses 30 points. Set your own position for this check in `.env` as `IPFINDER_LOCATION=23.8103,90.4125` (±10 km). Otherwise your public IP's location from ip-api is used (±100 km).
+
+**Proxy detection:** some networks (corporate firewalls, antivirus HTTPS scanning, captive portals) answer every connection themselves. Before trusting a handshake, IP Finder tries `192.0.2.1`, a documentation address that is never routed. If something answers, the timings and certificate would be the proxy's, so they are discarded and the report says why.
+
+### Level 7: the web dashboard
+
+```bash
+python -m pip install -e ".[web]"      # once
+ipfinder serve                          # prints http://127.0.0.1:8000/#token=...
+ipfinder serve --open                   # also opens your browser
+```
+
+Open the printed link. In the page you can:
+- Type up to 100 addresses (or load a text file), choose a profile, and press **Look up**. Results stream in one by one, each with its map and full report.
+- Download the lookup as an HTML report, CSV or JSON, without running it again. The server keeps the last 20 lookups.
+- See every data source and whether it is ready.
+
+| Option | Effect |
+|---|---|
+| `--port 8080` | Another port |
+| `--offline` | Lookups use local sources only; "My public IP" is hidden |
+| `--allow-active` | Active probes from the page; every lookup still needs the phrase, at most 20 addresses |
+| `-p full` | The profile selected in the page at first |
+| `--host 0.0.0.0 --allowed-host 192.168.1.5` | Reachable from other computers on your network, as `http://192.168.1.5:8000/` |
+
+**How it protects you** (it runs lookups with your API keys):
+- It listens on `127.0.0.1` only, unless you say otherwise.
+- Every start creates a new random token. The token sits after `#` in the link, which browsers never send to a server; every API call must carry it.
+- The `Host` header is checked against DNS rebinding, and requests from other websites are refused (`Origin`, `Sec-Fetch-Site`, no CORS).
+- A strict Content-Security-Policy allows scripts only from the server itself.
+
+With `--host 0.0.0.0` the connection is plain HTTP, so only use it on a network you trust.
+
+### Level 8: scripting and automation
+
+**JSON structure** (from a real run):
+
+```text
+{ tool, version, generated_at, disclaimer,
+  reports: [ { input, ip, version, lookup, notes,
+               summary: { country_by_source, countries_agree, coordinates, map_links, local_time, ... },
+               results: [ { provider, layer, ok, data, error, skipped, cached, elapsed_ms }, ... ],
+               verdict: { connection, anycast, location, location_confidence,
+                          reputation, exposure, rtt_check } } ],     # each only when it applies
+  errors:  [ { input, error, hint } ] }
+```
+
+Examples with [jq](https://jqlang.github.io/jq/), all tested:
+
+```bash
+# one line per address: IP, connection type, country
+ipfinder lookup -f json 8.8.8.8 1.1.1.1 \
+  | jq -r '.reports[] | [.ip, .verdict.connection.label, (.verdict.location.country_code // "-")] | @tsv'
+
+# the confidence score with every reason
+ipfinder lookup -f json 8.8.8.8 | jq '.reports[0].verdict.location_confidence'
+
+# which sources answered
+ipfinder lookup -f json 8.8.8.8 | jq -r '.reports[0].results[] | select(.ok) | .provider'
+
+# inputs that were not IP addresses
+ipfinder batch ips.txt -f json | jq -r '.errors[] | "\(.input): \(.error)"'
+```
+
+The first one, run as `ipfinder lookup --offline -f json 81.2.69.142 8.8.8.8 100.64.1.1 | jq ...` with MaxMind's test database (tab-separated):
+
+```text
+81.2.69.142	Unknown	GB
+8.8.8.8	Anycast service (Google Public DNS)	-
+100.64.1.1	Shared Address Space (CGNAT): not reachable from the internet	-
+```
+
+**In shell scripts:**
+- Test the exit code: `1` means some inputs were not IP addresses, `2` a usage problem.
+- Keep stdout for data; messages go to stderr.
+- For active probes in scripts, add `--authorized` only when you really are allowed to test the targets.
+
+**Large batches:** `ipfinder batch big-list.txt -f csv -o results.csv`. The rate limiters keep every source within its published limit: for ip-api that is 45 single lookups and 15 batch requests (of up to 100 addresses) a minute, with a half-second safety margin. The cache makes repeated runs fast.
+
+### Level 9: using it as a Python library
+
+The same engine can be called from Python. This example was run as written:
+
+```python
+import asyncio
+
+from ipfinder.core.config import Config
+from ipfinder.core.orchestrator import analyze_many
+from ipfinder.core.session import Session
+
+
+async def main():
+    config = Config.load(offline=True)  # or profile="standard", "full"
+    async with Session(config) as session:
+        reports, errors = await analyze_many(["81.2.69.142", "100.64.1.1", "bad"], session)
+    for report in reports:
+        verdict = report.verdict
+        place = verdict.get("location", {}).get("city", "-")
+        print(report.ip, "|", verdict["connection"]["label"], "|", place)
+    for error in errors:
+        print("not an IP:", error["input"], "-", error["error"])
+
+
+asyncio.run(main())
+```
+
+Output (with MaxMind's test database):
+
+```text
+81.2.69.142 | Unknown | London
+100.64.1.1 | Shared Address Space (CGNAT): not reachable from the internet | -
+not an IP: bad - 'bad' is not a valid IPv4 or IPv6 address
+```
+
+Other useful entry points:
+- `report.to_dict()`: the JSON form.
+- `ipfinder.core.orchestrator.iter_analyze()`: yields each result as soon as it is ready.
+- `ipfinder.output.html_report.render(reports, errors)`: the HTML report.
+- `ipfinder.output.csv_out.render(reports, errors)`: the CSV.
+
+---
+
+## Command reference
+
+| Command | Purpose |
+|---|---|
+| `ipfinder lookup IP...` (or just `ipfinder IP...`) | Analyse addresses |
+| `ipfinder batch FILE` | Analyse every address in a file |
+| `ipfinder me` | Analyse your own public IP |
+| `ipfinder sources` | Every source, whether it is ready, what it needs |
+| `ipfinder update-lists [NAME...] [--status] [--force]` | Download or check lists and GeoLite2 |
+| `ipfinder cache info` / `ipfinder cache clear` | Show or delete the cache |
+| `ipfinder serve [options]` | Start the web dashboard |
+| `ipfinder --version` | Show the version |
+
+Options for `lookup`, `batch` and `me` (they may come before or after the command):
+
+| Option | Effect |
+|---|---|
+| `-f, --format text\|json\|csv\|html` | Output format |
+| `-o, --output FILE` | Write to a file |
+| `-i, --input-file FILE` | Read addresses from a file (`lookup` only) |
+| `-p, --profile quick\|standard\|full` | Which sources run |
+| `--offline` | Local sources only |
+| `--active` / `--authorized` | Active probes / confirm them in advance |
+| `--no-cache` | Neither read nor write the cache |
+| `-v, --verbose` | Python flags and all matching ranges |
+| `--no-color` | No colours |
+
+## Settings reference
+
+All settings live in `.env` (or real environment variables, which win). The file is git-ignored.
+
+| Setting | Default | Meaning |
+|---|---|---|
+| API keys | none | See the [table in Level 4](#level-4-more-sources-keys-geolite2-lists) |
+| `IPFINDER_MAXMIND_CITY_DB` | `data/GeoLite2-City.mmdb` | GeoLite2 City file |
+| `IPFINDER_MAXMIND_ASN_DB` | `data/GeoLite2-ASN.mmdb` | GeoLite2 ASN file |
+| `IPFINDER_LISTS_DIR` | `data/lists` | Downloaded lists |
+| `IPFINDER_CACHE` | `data/cache.sqlite` | Lookup cache |
+| `IPFINDER_OUI_DB` | `data/oui.csv` | IEEE vendor list |
+| `IPFINDER_LOCATION` | not set | Your `latitude,longitude`, for the speed-of-light check |
+
+---
+
+## What it can tell you: the 12 layers
+
+| Layer | Question | Sources |
+|---|---|---|
+| L1 | What kind of address is it? | Built-in IANA table, IPv6 decoding (6to4, Teredo, NAT64, EUI-64) |
+| L2 | Where is its network? | ip-api, IPinfo Lite, MaxMind GeoLite2, Geofeed (the operator's own data) |
+| L3 | Who runs the network? | Team Cymru, PeeringDB, MaxMind ASN |
+| L4 | Who is it registered to, and the abuse contact? | RDAP (IANA bootstrap, then the right registry) |
+| L5 | Is it announced in BGP, is RPKI valid? | RIPEstat |
+| L6 | What is its name? | Reverse DNS with forward confirmation |
+| L7 | Anonymity or hosting? | Tor exit list, iCloud Private Relay, AWS/Google/Azure/Oracle/Cloudflare/Fastly ranges, X4BNet VPN and datacenter lists |
+| L8 | Which services are exposed? | Shodan InternetDB |
+| L9 | Any threat reputation? | AbuseIPDB, GreyNoise, VirusTotal, AlienVault OTX, ThreatFox, URLhaus, Spamhaus ZEN, Feodo Tracker, Spamhaus DROP |
+| L10 | Does it answer, and how fast? | Round trip, traceroute, TLS certificate (`--active` only) |
+| L11 | What do the sources add up to? | Location consensus, confidence, connection type, anycast, reputation and exposure scores |
+| L12 | How is it reported? | Terminal, JSON, CSV, HTML map, web dashboard |
+
+---
+
+## How it works
+
+1. **Validator.** Turns the text you typed into an address, or a clear error.
+2. **Stage 0 (offline analysis).** Decides whether online lookups apply, and for which address. For example, Teredo or 6to4 addresses are looked up by the IPv4 address inside them.
+3. **Stage 1.** All independent sources run at once.
+4. **Stage 2.** Sources that need stage-1 data: PeeringDB needs the ASN, Geofeed needs the RDAP record.
+5. **Stage 3.** Active probes (only with permission), after the passive lookups so their traffic does not distort the timings.
+6. **Analysis engine.** Combines everything into the verdict.
+
+All of this shares one session (HTTP client, cache, rate limiters). The web dashboard keeps one session for the whole server, so ip-api's limit holds across browser tabs.
+
+**Why its own IANA table?** Python's `ipaddress.is_global` disagrees with IANA's registry on some addresses, and the answer changes between Python versions. Tested on Python 3.10–3.14:
+- `5f00::1` (SRv6, not globally reachable) is `True` in Python.
+- `2001:1::3` (globally reachable) is `False` in Python.
+- `3fff::1` (documentation) is `True` only in Python 3.12.3.
+
+So IP Finder uses a table built from IANA's registry (`ipfinder/core/special_ranges.py`) and reports where Python disagrees.
+
+More: [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) (diagram, data flow, provider contract) and [docs/REPORT.md](docs/REPORT.md) (algorithms with formulas).
+
+---
+
+## What is verified, and what is not yet
+
+The development environment could not reach most outside services, so the status is stated plainly.
+
+**Verified for real:**
+- Address analysis against IANA's registry, on Python 3.10, 3.11, 3.12, 3.13 and 3.14.
+- AWS `ip-ranges.json` (17,570 prefixes) and the X4BNet VPN and datacenter lists, downloaded live.
+- MaxMind's official test databases.
+- The built-in X.509 certificate reader, matched against CPython on 128 real CA certificates.
+- The HTML report and the dashboard in a real browser (Chromium): maps drawn, no Content-Security-Policy errors, no requests to outside servers.
+- `--offline` makes no HTTP request and no DNS query (counted in tests).
+- The dashboard on the oldest and newest allowed versions (FastAPI 0.115.0 and 0.143.0, uvicorn 0.30.0 and 0.54.0).
+
+**Not yet run against the live service** (tested against each service's documented response format):
+- ip-api, IPinfo, Team Cymru, RDAP, RIPEstat, reverse DNS, Geofeed, Shodan InternetDB.
+- The threat-intelligence APIs.
+- The Tor, Apple, Google, Azure, Oracle, Cloudflare and Fastly lists.
+- Real ping and traceroute output.
+
+To record real responses on a connected computer:
+
+```bash
+cp .env.example .env               # add only the keys you have
+python scripts/capture_fixtures.py --list
+python scripts/capture_fixtures.py # 8.8.8.8, 1.1.1.1, 2001:4860:4860::8888
+python scripts/demo.py --check     # what is ready for a demo
+```
+
+---
+
+## Limits
+
+- **Geolocation is approximate.** It locates the network, never a person. VPN, Tor, CGNAT and mobile networks move it further away.
+- **A listing is suspicion, not proof.** Shared addresses (CGNAT, cloud, VPN) carry other people's history. One or two VirusTotal engines flagging an address is common.
+- **VPN lists are community-made.** "Listed VPN network" means the network is known as one, not that a given connection used a VPN. VPNs not on the list are not detected. Tor's list has no IPv6 addresses.
+- **Free tiers have terms.** ip-api, VirusTotal and Shodan InternetDB are free for non-commercial use only, and ip-api's free tier is plain HTTP.
+- **The confidence rules are not calibrated** on a dataset of known locations yet.
+
+---
+
+## Responsible use
+
+- Default lookups are passive and never touch the target.
+- Active probes need `--active` and the exact phrase `I AM AUTHORIZED`. They are limited to 20 public addresses per run, with no port scan.
+- **Bangladesh:** the Cyber Security Ordinance 2025 (Ordinance No. 25 of 2025) makes entering or interfering with a computer system without permission an offence. Check the latest status in the official Gazette before relying on this. Details: [ADVANCED_PLAN.md §9](ADVANCED_PLAN.md#9-security-ethics-ও-আইন).
+- API keys live only in `.env`, and error messages never contain request URLs (IPinfo puts its token in the URL).
+- The cache and lists stay in `data/`, which is git-ignored, so no lookup history is ever committed.
+
+---
+
+## Development
+
+```bash
+python -m pip install -e ".[dev]"
 ruff check . && ruff format --check .
 pytest -q
 ```
 
-সব test offline চলে, কোনো API key লাগে না: online source-গুলো fake HTTP ও fake DNS দিয়ে test করা হয়, আর MaxMind অংশ MaxMind-এর official test database দিয়ে। CI প্রতিটি push-এ Python 3.10, 3.11, 3.12, 3.13 ও 3.14-এ চালায়।
+**Tests.** 631 tests run with no internet and no API keys:
+- Online sources are tested with a fake HTTP layer and a fake DNS resolver.
+- The MaxMind part uses MaxMind's official test databases.
+- The whole offline demo runs end to end inside the suite, behind a dead proxy that would expose any network use.
+- GitHub Actions runs everything on Python 3.10 to 3.14 on every push.
 
----
+**Helper scripts:**
 
-## Phase 0: আসল API response সংরক্ষণ (আপনার নিজের computer-এ)
+| Script | Purpose |
+|---|---|
+| `scripts/demo.py` | Guided 11-step demo (`--offline`, `--check`, `--list`, `--from N`, `--yes`) |
+| `scripts/capture_fixtures.py` | Record real API responses for tests (keys are never written) |
+| `scripts/check_html_report.py` | Open an HTML report in Chromium and check the maps (needs Playwright) |
+| `scripts/check_dashboard.py` | Start the dashboard and use it in Chromium (needs Playwright) |
+| `scripts/build_world_map.py` | Rebuild the embedded Natural Earth map data |
 
-Phase 2+-এর provider বানানোর আগে প্রতিটি API আসলে কী ফেরত দেয়, তা `tests/fixtures/`-এ রেখে দিন:
+**Adding a source.**
+1. Write a class that extends `Provider` in `ipfinder/providers/`.
+2. Set its name, layer, stage, profiles, key, `local`/`active`, cache time and rate limit, and implement `lookup()`.
+3. Add it to `default_providers()` in `ipfinder/providers/__init__.py`.
 
-```bash
-cp .env.example .env              # যে key আছে শুধু সেগুলো বসান (কোনোটাই বাধ্যতামূলক নয়)
-python scripts/capture_fixtures.py --list
-python scripts/capture_fixtures.py                  # 8.8.8.8, 1.1.1.1, 2001:4860:4860::8888
-python scripts/capture_fixtures.py 8.8.8.8 --only ip-api rdap   # IP আগে, তারপর --only
+The orchestrator, cache, rate limiter, `sources` command and reports handle the rest.
+
+**Project structure:**
+
+```text
+IP-Finder/
+├── ipfinder/
+│   ├── cli.py            # the command line
+│   ├── core/             # validator, IANA table, config, session, cache, rate limiter, orchestrator
+│   ├── providers/        # the 27 sources (base.py is the contract)
+│   ├── lists/            # downloadable lists: specs, safe storage, prefix index, GeoLite2 download
+│   ├── analysis/         # offline analysis, consensus, classification, scores, speed-of-light check
+│   ├── active/           # active probes and a small X.509 reader
+│   ├── output/           # terminal, JSON, CSV, HTML report (+ embedded Leaflet and Natural Earth)
+│   └── web/              # the web dashboard (FastAPI app and its page)
+├── scripts/              # demo, fixture capture, browser checks, map data builder
+├── tests/                # pytest suite (offline)
+├── docs/                 # architecture, report, demo, viva notes, phase notes, screenshots
+├── data/                 # downloaded databases, lists and cache (git-ignored)
+├── .env.example          # every setting and key
+└── ADVANCED_PLAN.md      # the full plan (Bengali)
 ```
 
-- Key ছাড়া চলে: ip-api, RDAP, RIPEstat (prefix-overview, routing-status, abuse-contact), Shodan InternetDB, GreyNoise Community (key ঐচ্ছিক)।
-- Key লাগে: IPinfo Lite, AbuseIPDB, VirusTotal (key না থাকলে skip হয়)। OTX আর abuse.ch-এর API (POST) এই script-এ নেই; সেগুলো `ipfinder --profile full` দিয়ে দেখা যায়।
-- API key কখনো fixture file-এ লেখা হয় না (URL redact করা হয়, request header save হয় না)।
-- Rate limit মানা হয়: ip-api-তে 45/min (`X-Rl`/`X-Ttl` header পড়ে অপেক্ষা করে), VirusTotal-এ 4/min।
+---
 
-> এই script লেখার environment থেকে external API-তে network access ছিল না, তাই এটি mock দিয়ে test করা হয়েছে। আসল API-র বিরুদ্ধে প্রথমবার চালানো হবে আপনার computer-এ।
+## Documentation
+
+The project documents are in Bengali, with technical terms in English.
+
+| Document | Contents |
+|---|---|
+| [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) | Diagram, the path of a lookup, the provider contract, who sees the address in each mode |
+| [docs/REPORT.md](docs/REPORT.md) | Project report: goals, design, algorithms, testing, results, limits, references |
+| [docs/DEMO.md](docs/DEMO.md) | A 10-minute demo script with talking points, online and offline |
+| [docs/VIVA.md](docs/VIVA.md) | 35 viva questions with answers and code pointers |
+| [docs/PHASE_NOTES.md](docs/PHASE_NOTES.md) | Detailed notes for each development phase, with real outputs |
+| [ADVANCED_PLAN.md](ADVANCED_PLAN.md) | The full plan, data-source checks and roadmap |
+| [data/README.md](data/README.md) | Which data files exist and how to get them |
+
+Screenshots: [HTML report](docs/html-report-example.png) and [dashboard](docs/dashboard-example.png). Both use MaxMind's test database, not real GeoLite2 data.
 
 ---
 
-## Roadmap অবস্থা
+## Roadmap status
 
-| Phase | বিষয় | অবস্থা |
+| Phase | Topic | Status |
 |---|---|---|
-| 0 | Setup, `.env`, CI, fixture capture script | 🟡 script প্রস্তুত; আসল API fixture এখনও রেকর্ড করা বাকি (নিচে দেখুন) |
-| 1 | Validator, L1 offline analysis, models, CLI | ✅ |
-| 2 | ip-api, IPinfo Lite, MaxMind, Team Cymru, PeeringDB; cache, rate limiter | ✅ (code ও test; আসল API-তে প্রথম চালানো বাকি) |
-| 3 | RDAP, RIPEstat (BGP/RPKI), DNS/FCrDNS, Geofeed | ✅ (code ও test; আসল API-তে প্রথম চালানো বাকি) |
-| 4 | Tor, Private Relay, cloud range, VPN/datacenter list, InternetDB; `update-lists` | ✅ (code ও test; AWS ও X4BNet list live দিয়ে যাচাই, বাকি source আপনার computer-এ প্রথম চালানো বাকি) |
-| 5 | AbuseIPDB, GreyNoise, VirusTotal, OTX, ThreatFox, URLhaus, Spamhaus ZEN; Feodo ও Spamhaus DROP list | ✅ (code ও test; আসল API-তে প্রথম চালানো বাকি) |
-| 6 | Connection type, anycast, location consensus ও confidence, reputation ও exposure score | ✅ (প্রতিটা score-এর unit test আছে) |
-| 7 | `--active`: RTT (TCP + ping), traceroute, TLS certificate, speed-of-light check, confirmation, proxy detection | ✅ (`--active` ছাড়া কখনো চলে না, test-এ যাচাই করা) |
-| 8 | CSV, offline map সহ HTML report, `batch` command, progress bar | ✅ (HTML report আসল Chromium-এ disk থেকে খুলে map আঁকা ও শূন্য network request যাচাই করা) |
-| 9 | (ঐচ্ছিক) web dashboard: FastAPI + Leaflet, `ipfinder serve` | ✅ (আসল Chromium-এ browser থেকে lookup, map ও download যাচাই করা) |
-| 10 | Architecture, report, demo script, viva প্রস্তুতি; `--offline` mode | ✅ (পুরো offline demo test-এ শুরু থেকে শেষ পর্যন্ত চলে) |
-
-`ipfinder sources` চালালে প্রতিটি data source-এর phase ও API-key অবস্থা দেখা যায়।
-
----
-
-## দায়িত্বশীল ব্যবহার
-
-- Phase 1 পুরোপুরি passive ও offline। কোনো packet কোথাও পাঠায় না।
-- HTML report খুললে কোনো request যায় না (map-এর সব কিছু file-এর ভেতরে)। তাই কে কোন address দেখছে, তা কোনো map বা CDN service জানতে পারে না।
-- Web dashboard default-এ শুধু এই computer থেকে খোলা যায়, আর প্রতিটা API call-এ token লাগে। `--host 0.0.0.0` দিলে connection plain HTTP হয়, তাই শুধু বিশ্বস্ত network-এ ব্যবহার করুন।
-- `--offline` দিলে address-এর কোনো তথ্য এই computer-এর বাইরে যায় না। কোন mode-এ কে কী দেখে, তার পুরো table: [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md#কোন-mode-এ-address-টা-কে-দেখতে-পায়)।
-- Active probing (Phase 7) default-এ বন্ধ। `--active` দিলেও স্পষ্ট confirmation (`I AM AUTHORIZED`) ছাড়া চলে না, এক run-এ সর্বোচ্চ ২০টা address, শুধু public address, আর port scan নেই। শুধু নিজের বা লিখিত অনুমতিপ্রাপ্ত system-এ চালান।
-- বাংলাদেশে সাইবার সুরক্ষা অধ্যাদেশ, ২০২৫ প্রযোজ্য; বিস্তারিত [ADVANCED_PLAN.md §9](ADVANCED_PLAN.md#9-security-ethics-ও-আইন)।
+| 0 | Setup, `.env`, CI, fixture capture script | 🟡 Script ready; real API fixtures still to be recorded |
+| 1 | Validator, offline analysis, CLI | ✅ |
+| 2 | ip-api, IPinfo Lite, MaxMind, Team Cymru, PeeringDB; cache; rate limiter | ✅ (first live run pending) |
+| 3 | RDAP, RIPEstat (BGP/RPKI), reverse DNS, Geofeed | ✅ (first live run pending) |
+| 4 | Tor, Private Relay, cloud ranges, VPN lists, InternetDB; `update-lists` | ✅ (AWS and X4BNet verified live) |
+| 5 | Threat intelligence and offline threat lists | ✅ (first live run pending) |
+| 6 | Analysis engine: consensus, confidence, connection type, scores | ✅ |
+| 7 | Active mode with confirmation and proxy detection | ✅ |
+| 8 | CSV, HTML report with offline map, batch, progress bar | ✅ |
+| 9 | Web dashboard | ✅ |
+| 10 | Architecture, report, demo, viva notes; `--offline` | ✅ |
