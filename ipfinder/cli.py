@@ -8,6 +8,7 @@
     ipfinder lookup 8.8.8.8 --profile quick --no-cache
     ipfinder lookup 8.8.8.8 --active   (ping, traceroute, TLS certificate; asks first)
     ipfinder me            (your own public IP)
+    ipfinder serve         (web dashboard on http://127.0.0.1:8000; pip install -e ".[web]")
     ipfinder sources
     ipfinder update-lists  (Tor, cloud, Private Relay, VPN lists; GeoLite2 with a key)
     ipfinder update-lists tor-exits --force | ipfinder update-lists --status
@@ -29,12 +30,13 @@ from __future__ import annotations
 
 import argparse
 import asyncio
-import codecs
 import contextlib
 import io
 import os
+import secrets
 import sys
-from dataclasses import replace
+import threading
+import webbrowser
 from pathlib import Path
 
 from rich.console import Console
@@ -52,6 +54,7 @@ from rich.text import Text
 from ipfinder import __version__
 from ipfinder.core.cache import Cache
 from ipfinder.core.config import PROFILES, Config
+from ipfinder.core.inputs import decode_text, read_lines
 from ipfinder.core.orchestrator import analyze_many
 from ipfinder.core.session import Session
 from ipfinder.core.text import display_safe
@@ -59,14 +62,14 @@ from ipfinder.lists.maxmind import update_maxmind
 from ipfinder.lists.specs import SPECS
 from ipfinder.lists.store import ListStore
 from ipfinder.output import csv_out, html_report, json_out, terminal
-from ipfinder.providers import PLANNED_PROVIDERS, default_providers
+from ipfinder.providers import PLANNED_PROVIDERS, source_overview
+from ipfinder.providers.active import ACTIVE_LIMIT, ACTIVE_WARNING, CONFIRMATION
 from ipfinder.providers.base import ProviderError
 from ipfinder.providers.ipapi import public_ip
-from ipfinder.providers.list_base import ListProvider
 
 EXIT_OK, EXIT_INVALID_INPUT, EXIT_USAGE, EXIT_INTERNAL = 0, 1, 2, 3
 EXIT_INTERRUPTED = 130
-COMMANDS = ("lookup", "batch", "me", "sources", "cache", "update-lists")
+COMMANDS = ("lookup", "batch", "me", "sources", "cache", "update-lists", "serve")
 LIST_NAMES = (*SPECS, "maxmind")
 
 
@@ -127,6 +130,35 @@ def _build_parser() -> argparse.ArgumentParser:
     batch.add_argument("file", type=Path, help="text file: one address per line, # = comment")
     sub.add_parser("me", parents=[output], help="analyse your own public IP address")
     sub.add_parser("sources", help="show data sources, their status and API-key needs")
+    serve = sub.add_parser("serve", help='start the web dashboard (needs: pip install -e ".[web]")')
+    serve.add_argument(
+        "--host",
+        default="127.0.0.1",
+        help="address to listen on (default 127.0.0.1: only this computer can connect)",
+    )
+    serve.add_argument("--port", type=int, default=8000, help="port (default 8000)")
+    serve.add_argument(
+        "--allowed-host",
+        action="append",
+        default=[],
+        metavar="NAME",
+        help="also accept this name or address in the browser's address bar "
+        "(e.g. this computer's LAN address with --host 0.0.0.0)",
+    )
+    serve.add_argument(
+        "--allow-active",
+        action="store_true",
+        help="allow active probes from the page; each lookup still needs the "
+        "confirmation phrase, at most 20 addresses",
+    )
+    serve.add_argument(
+        "-p", "--profile", choices=PROFILES, default=None, help="profile selected in the page"
+    )
+    serve.add_argument(
+        "--no-cache", action="store_true", help="do not read or write data/cache.sqlite"
+    )
+    serve.add_argument("--open", action="store_true", help="open the dashboard in your browser")
+    serve.add_argument("--no-color", action="store_true", help="disable colours")
     cache = sub.add_parser("cache", help="show or clear the local lookup cache")
     cache.add_argument("action", choices=("info", "clear"))
     update = sub.add_parser(
@@ -146,23 +178,8 @@ def _build_parser() -> argparse.ArgumentParser:
     return parser
 
 
-def _read_lines(lines) -> list[str]:
-    out = []
-    for line in lines:
-        line = line.split("#", 1)[0].strip()
-        if line:
-            out.append(line)
-    return out
-
-
 def _read_input_file(path: Path) -> list[str]:
-    """UTF-8 (with or without BOM) or UTF-16 with BOM, e.g. from Windows PowerShell."""
-    data = path.read_bytes()
-    if data.startswith((codecs.BOM_UTF16_LE, codecs.BOM_UTF16_BE)):
-        text = data.decode("utf-16")
-    else:
-        text = data.decode("utf-8-sig")
-    return _read_lines(text.splitlines())
+    return read_lines(decode_text(path.read_bytes()).splitlines())
 
 
 def _prompt(message: str) -> str:
@@ -182,7 +199,7 @@ def _collect_inputs(args) -> list[str]:
     if args.input_file:
         inputs += _read_input_file(args.input_file)
     if not inputs and sys.stdin is not None and not sys.stdin.isatty():
-        inputs = _read_lines(sys.stdin)
+        inputs = read_lines(sys.stdin)
     if not inputs:
         inputs = [_prompt("Enter an IP address: ")]
     return inputs
@@ -215,10 +232,6 @@ def _config(args) -> Config:
     )
 
 
-ACTIVE_LIMIT = 20  # active probing is for checking a few systems, not for sweeps
-CONFIRMATION = "I AM AUTHORIZED"
-
-
 def _confirm_active(args, count: int, messages: Console) -> bool:
     """Ask before any packet is sent to a target (ADVANCED_PLAN.md section 9.1)."""
     if count > ACTIVE_LIMIT:
@@ -230,14 +243,7 @@ def _confirm_active(args, count: int, messages: Console) -> bool:
             )
         )
         return False
-    messages.print(
-        Text(
-            "[!] Active mode sends packets directly to the target "
-            "(TCP handshakes on ports 443/80, ping, traceroute, a TLS handshake).\n"
-            "    Only scan systems you own or have written permission to test.",
-            style="yellow",
-        )
-    )
+    messages.print(Text("[!] " + ACTIVE_WARNING.replace("\n", "\n    "), style="yellow"))
     if args.authorized:
         messages.print(Text("    --authorized given: continuing.", style="yellow"))
         return True
@@ -387,23 +393,10 @@ def _cmd_sources(console: Console) -> int:
     table = Table(title="IP Finder data sources")
     for col in ("Source", "Layer", "Profiles", "Status", "Needs"):
         table.add_column(col)
-    full = replace(config, profile="full")
-    for p in default_providers():
-        reason = p.unavailable_reason(full)
-        status = Text("ready", style="green") if reason is None else Text(reason, style="yellow")
-        if p.requires_key:
-            needs = p.requires_key
-        elif p.optional_key:
-            needs = f"{p.optional_key} (optional)"
-        elif p.required_files(config):
-            needs = "GeoLite2 .mmdb files"
-        elif isinstance(p, ListProvider):
-            needs = "ipfinder update-lists"
-        elif p.active:
-            needs = "--active (authorised targets only)"
-        else:
-            needs = "-"
-        table.add_row(p.name, p.layer, ", ".join(p.profiles), status, needs)
+    for row in source_overview(config):
+        style = "green" if row["ready"] else "yellow"
+        status = Text(row["status"], style=style)
+        table.add_row(row["name"], row["layer"], ", ".join(row["profiles"]), status, row["needs"])
     for p in PLANNED_PROVIDERS:
         if p.key is None:
             needs = "-"
@@ -413,6 +406,88 @@ def _cmd_sources(console: Console) -> int:
             needs = Text(f"{p.key} missing", style="yellow")
         table.add_row(p.name, p.layer, "-", Text(f"planned (Phase {p.phase})", style="dim"), needs)
     console.print(table)
+    return EXIT_OK
+
+
+def _cmd_serve(args, messages: Console) -> int:
+    """Phase 9: the web dashboard (ipfinder/web/app.py explains its safeguards)."""
+    try:
+        import uvicorn
+
+        from ipfinder.web.app import LOOPBACK, create_app
+    except ImportError as exc:
+        messages.print(
+            Text(
+                f"[!] The web dashboard needs FastAPI and uvicorn ({exc.name} is missing): "
+                'pip install -e ".[web]"',
+                style="red",
+            )
+        )
+        return EXIT_USAGE
+    if not 1 <= args.port <= 65535:
+        messages.print(Text(f"[!] --port must be 1-65535, not {args.port}.", style="red"))
+        return EXIT_USAGE
+    host = args.host.strip("[]")
+    wildcard = host in ("0.0.0.0", "::", "")
+    allowed = list(args.allowed_host)
+    if not wildcard and host.lower() not in LOOPBACK:
+        allowed.append(host)
+    token = secrets.token_urlsafe(24)
+    shown = "127.0.0.1" if wildcard else host
+    url = f"http://{f'[{shown}]' if ':' in shown else shown}:{args.port}/#token={token}"
+    config = Config.load(profile=args.profile, use_cache=not args.no_cache)
+    app = create_app(config, token, allow_active=args.allow_active, allowed_hosts=allowed)
+
+    messages.print(Text(f"IP Finder {__version__} web dashboard", style="bold"))
+    messages.print(f"  Open: {url}")
+    messages.print(
+        Text(
+            "  The link carries a new random token; anyone who has it can run lookups with "
+            "your API keys. Press Ctrl+C to stop.",
+            style="dim",
+        )
+    )
+    if wildcard or host.lower() not in LOOPBACK:
+        messages.print(
+            Text(
+                f"[!] Listening on {host or '*'}: other computers that can reach port "
+                f"{args.port} can open the page; they still need the token. The connection "
+                "is plain HTTP, so the token and the results cross the network unencrypted.",
+                style="yellow",
+            )
+        )
+    if wildcard:
+        messages.print(
+            Text(
+                f"    From another computer: http://<this computer's address>:{args.port}/"
+                f"#token={token}, after starting with --allowed-host <that address>.",
+                style="yellow",
+            )
+        )
+    if args.allow_active:
+        messages.print(Text("[!] " + ACTIVE_WARNING.replace("\n", "\n    "), style="yellow"))
+        messages.print(
+            Text(
+                f"    --allow-active: the page can send probes, after '{CONFIRMATION}' is "
+                f"typed with each lookup (at most {ACTIVE_LIMIT} addresses).",
+                style="yellow",
+            )
+        )
+    if args.open:
+        threading.Timer(1.0, webbrowser.open, args=[url]).start()
+    try:
+        uvicorn.run(
+            app, host=host or "0.0.0.0", port=args.port, log_level="warning", access_log=False
+        )
+    except SystemExit as exc:  # uvicorn exits like this when it cannot listen
+        if exc.code:
+            messages.print(
+                Text(
+                    f"[!] The server could not start on {host}:{args.port} (port in use?).",
+                    style="red",
+                )
+            )
+            return EXIT_USAGE
     return EXIT_OK
 
 
@@ -536,6 +611,8 @@ def main(argv: list[str] | None = None) -> int:
             return _cmd_update_lists(args, console, messages)
         if args.command == "me":
             return _cmd_me(args, console, messages)
+        if args.command == "serve":
+            return _cmd_serve(args, messages)
         if args.command == "batch":
             args.ips, args.input_file = [], args.file
         return _cmd_lookup(args, console, messages)

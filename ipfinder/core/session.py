@@ -26,6 +26,10 @@ def make_http_client(config: Config) -> httpx.AsyncClient:
     )
 
 
+async def _view_close() -> None:
+    """Closing a view must not close the shared client, cache or databases."""
+
+
 class Session:
     def __init__(
         self,
@@ -63,6 +67,18 @@ class Session:
                 close()
         self.resources.clear()
         self.cache.close()
+
+    def with_config(self, config: Config) -> Session:
+        """This session's HTTP client, cache, lists, databases and rate limiters with
+        other settings (profile, active mode). The web dashboard runs every request
+        through one shared session this way, so a rate limit holds across browser
+        tabs. The view owns nothing: close the original session, never the view."""
+        view = object.__new__(Session)
+        view.__dict__.update(self.__dict__)
+        view.config = config
+        view._own_http = False
+        view.close = _view_close
+        return view
 
     def limiter(self, name: str, calls: int, period: float) -> RateLimiter:
         """One shared limiter per name for the whole run."""

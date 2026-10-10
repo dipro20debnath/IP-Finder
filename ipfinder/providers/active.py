@@ -20,6 +20,15 @@ from ipfinder.providers.base import LookupContext, Provider, ProviderError
 from ipfinder.providers.cymru import origin_query, parse_origin
 
 ALL_PROFILES = ("quick", "standard", "full")
+# The gate in front of every probe, shared by the CLI and the web dashboard
+# (ADVANCED_PLAN.md section 9.1).
+ACTIVE_LIMIT = 20  # active probing is for checking a few systems, not for sweeps
+CONFIRMATION = "I AM AUTHORIZED"
+ACTIVE_WARNING = (
+    "Active mode sends packets directly to the target "
+    "(TCP handshakes on ports 443/80, ping, traceroute, a TLS handshake).\n"
+    "Only scan systems you own or have written permission to test."
+)
 VANTAGE_URL = "http://ip-api.com/json/"
 
 

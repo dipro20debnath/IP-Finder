@@ -38,107 +38,12 @@ SOURCE_COLOURS = {
     "ip-api": "#d97706",
     "ipinfo-lite": "#0891b2",
 }
-
-CSS = """
-:root { color-scheme: light; }
-body { font: 15px/1.5 system-ui, -apple-system, "Segoe UI", Roboto, "Noto Sans Bengali",
-       sans-serif; margin: 0; background: #f4f6f8; color: #1f2933; }
-header, main, footer { max-width: 1100px; margin: 0 auto; padding: 16px; }
-header { padding-bottom: 0; }
-header h1 { margin: 0 0 4px; font-size: 22px; }
-header .warn { margin-bottom: 0; }
-.muted { color: #52606d; font-size: 13px; }
-.warn { background: #fff4e5; border: 1px solid #f5c37a; padding: 8px 12px; border-radius: 6px; }
-section.report { background: #fff; border: 1px solid #d9e2ec; border-radius: 8px;
-                 padding: 16px; margin: 16px 0; }
-section.report h2 { margin: 0 0 12px; font-size: 20px; word-break: break-all; }
-.cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 10px; }
-.card { border: 1px solid #d9e2ec; border-radius: 6px; padding: 8px 10px; }
-.card .k { font-size: 12px; color: #52606d; text-transform: uppercase; letter-spacing: .04em; }
-.card .v { font-weight: 600; }
-.good { color: #1b7f3b; } .mid { color: #a15c00; } .bad { color: #b42318; }
-.map { height: 420px; margin: 12px 0 4px; border-radius: 6px; border: 1px solid #d9e2ec;
-       background: #cfe3f3; }
-.legend span { display: inline-block; margin-right: 12px; }
-.dot { display: inline-block; width: 10px; height: 10px; border-radius: 50%;
-       margin-right: 4px; vertical-align: middle; }
-details { margin-top: 12px; }
-summary { cursor: pointer; font-weight: 600; }
-pre.rich { padding: 12px; border-radius: 6px;
-           overflow-x: auto; font: 12.5px/1.35 ui-monospace, "Cascadia Mono", Menlo,
-           Consolas, monospace; }
-table.errors td { padding: 4px 8px; border-bottom: 1px solid #d9e2ec; }
-"""
-
-MAP_JS = """
-(function () {
-  "use strict";
-  var world = JSON.parse(document.getElementById("ipf-world").textContent);
-  var maps = JSON.parse(document.getElementById("ipf-maps").textContent);
-  function text(value) {           // labels are text, never HTML
-    var el = document.createElement("span");
-    el.textContent = value;
-    return el;
-  }
-  function area(lat, lon, radiusKm) { // a point, or the box around its circle
-    return L.latLng(lat, lon).toBounds(Math.max(radiusKm || 0, 25) * 2000);
-  }
-  maps.forEach(function (m) {
-    var map = L.map(m.id, { worldCopyJump: true, minZoom: 1 });
-    map.attributionControl.setPrefix("Leaflet | Natural Earth (public domain)");
-    // Leaflet can only draw shapes once the map has a view, so set it first.
-    var view = L.latLngBounds([]);
-    m.points.forEach(function (p) { view.extend(area(p.lat, p.lon, p.radius_km)); });
-    if (m.consensus) { view.extend(area(m.consensus.lat, m.consensus.lon, 0)); }
-    if (m.speed_of_light) {
-      view.extend(area(m.speed_of_light.lat, m.speed_of_light.lon, m.speed_of_light.max_km));
-    }
-    if (view.isValid()) {
-      map.fitBounds(view, { padding: [30, 30], maxZoom: 5 });  // country scale
-    } else {
-      map.setView([20, 0], 2);
-    }
-
-    L.geoJSON(world.countries, {
-      style: { color: "#7b8794", weight: 0.7, fillColor: "#f5f7fa", fillOpacity: 1 },
-      onEachFeature: function (f, layer) {
-        layer.bindTooltip(text(f.properties.n), { sticky: true });
-      }
-    }).addTo(map);
-    var cities = L.layerGroup(world.cities.map(function (c) {
-      return L.circleMarker([c[1], c[2]], { radius: 2, color: "#3e4c59", weight: 1 })
-        .bindTooltip(text(c[0]));
-    })).addTo(map);
-    var streets = L.tileLayer("https://tile.openstreetmap.org/{z}/{x}/{y}.png", {
-      maxZoom: 19, attribution: "&copy; OpenStreetMap contributors"
-    });
-    L.control.layers(null, {
-      "Cities": cities,
-      "OpenStreetMap streets (online; refused when opened from disk)": streets
-    }, { collapsed: false }).addTo(map);
-
-    if (m.speed_of_light) {
-      var s = m.speed_of_light;
-      L.circle([s.lat, s.lon], { radius: s.max_km * 1000, color: "#b42318", weight: 1.5,
-        dashArray: "6 4", fill: false }).bindTooltip(text(s.label)).addTo(map);
-      L.circleMarker([s.lat, s.lon], { radius: 5, color: "#b42318", fillOpacity: 1 })
-        .bindTooltip(text("You (vantage point)")).addTo(map);
-    }
-    m.points.forEach(function (p) {
-      if (p.radius_km) {
-        L.circle([p.lat, p.lon], { radius: p.radius_km * 1000, color: p.color, weight: 1,
-          dashArray: "4 4", fillOpacity: 0.06 }).addTo(map);
-      }
-      L.circleMarker([p.lat, p.lon], { radius: 7, color: p.color, fillOpacity: 0.85 })
-        .bindPopup(text(p.label)).bindTooltip(text(p.label)).addTo(map);
-    });
-    if (m.consensus) {
-      L.circleMarker([m.consensus.lat, m.consensus.lon], { radius: 10, color: "#111827",
-        weight: 3, fill: false }).bindTooltip(text(m.consensus.label)).addTo(map);
-    }
-  });
-})();
-"""
+NO_MAP = "No source gave coordinates, so there is no map."
+FOOTER = (
+    "Map: Leaflet 1.9.4 (BSD 2-Clause) and Natural Earth 1:110m (public domain), embedded "
+    "in this file. Street tiles, if switched on, come from OpenStreetMap (&copy; "
+    "OpenStreetMap contributors)."
+)
 
 
 def _asset(name: str) -> str:
@@ -170,7 +75,7 @@ def _ok(report: IPReport, name: str) -> dict:
     return result.data if result is not None and result.ok else {}
 
 
-def map_data(report: IPReport, index: int) -> dict | None:
+def map_data(report: IPReport, index: int | str) -> dict | None:
     """Points for the map, or None when no source gave coordinates."""
     points = []
     for name, colour in SOURCE_COLOURS.items():
@@ -294,43 +199,55 @@ def _terminal_html(report: IPReport, verbose: bool) -> str:
     )
 
 
+def section(report: IPReport, index: int | str, verbose: bool = False) -> tuple[str, dict | None]:
+    """One address: its HTML (cards, map container, legend, full report) and the
+    map data for IPFinderMap.draw(), or None when there is nothing to draw.
+    The web dashboard shows the same section."""
+    data = map_data(report, index)
+    parts = [f"<h2>{_e(report.ip)}</h2>", _cards(report)]
+    if data:
+        parts.append(f'<div class="map" id="{data["id"]}" role="img" aria-label="map"></div>')
+        parts.append(_legend(data))
+        if (report.verdict or {}).get("anycast", {}).get("anycast"):
+            parts.append(
+                '<p class="warn">Anycast: this address is served from many places; the '
+                "points show where databases place it, not where you reach it.</p>"
+            )
+    else:
+        parts.append(f'<p class="muted">{NO_MAP}</p>')
+    parts.append(
+        f"<details open><summary>Full report</summary>{_terminal_html(report, verbose)}</details>"
+    )
+    return f'<section class="report">{"".join(parts)}</section>', data
+
+
+def errors_section(errors: list[dict]) -> str:
+    rows = "".join(
+        f"<tr><td>{_e(err['input'])}</td><td>{_e(err['error'])}"
+        f"{' - ' + _e(err['hint']) if err.get('hint') else ''}</td></tr>"
+        for err in errors
+    )
+    return (
+        f'<section class="report"><h2>Inputs that are not IP addresses</h2>'
+        f'<table class="errors">{rows}</table></section>'
+    )
+
+
 def render(reports: list[IPReport], errors: list[dict], verbose: bool = False) -> str:
     generated = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
     maps, sections = [], []
     for index, report in enumerate(reports):
-        data = map_data(report, index)
-        parts = [f"<h2>{_e(report.ip)}</h2>", _cards(report)]
+        html_section, data = section(report, index, verbose)
+        sections.append(html_section)
         if data:
             maps.append(data)
-            parts.append(f'<div class="map" id="{data["id"]}" role="img" aria-label="map"></div>')
-            parts.append(_legend(data))
-            if (report.verdict or {}).get("anycast", {}).get("anycast"):
-                parts.append(
-                    '<p class="warn">Anycast: this address is served from many places; the '
-                    "points show where databases place it, not where you reach it.</p>"
-                )
-        else:
-            parts.append('<p class="muted">No source gave coordinates, so there is no map.</p>')
-        parts.append(
-            f"<details open><summary>Full report</summary>{_terminal_html(report, verbose)}"
-            "</details>"
-        )
-        sections.append(f'<section class="report">{"".join(parts)}</section>')
     if errors:
-        rows = "".join(
-            f"<tr><td>{_e(err['input'])}</td><td>{_e(err['error'])}"
-            f"{' - ' + _e(err['hint']) if err.get('hint') else ''}</td></tr>"
-            for err in errors
-        )
-        sections.append(
-            f'<section class="report"><h2>Inputs that are not IP addresses</h2>'
-            f'<table class="errors">{rows}</table></section>'
-        )
+        sections.append(errors_section(errors))
 
-    leaflet_js = _asset("leaflet.js")
+    leaflet_js, map_js = _asset("leaflet.js"), _asset("ipfinder-map.js")
     csp = (
         "default-src 'none'; "
-        f"script-src '{_sha256(leaflet_js)}' '{_sha256(MAP_JS)}'; "
+        f"script-src '{_sha256(leaflet_js)}' '{_sha256(map_js)}'; "
         "style-src 'unsafe-inline'; img-src data: https://tile.openstreetmap.org; "
         "base-uri 'none'; form-action 'none'"
     )
@@ -342,18 +259,17 @@ def render(reports: list[IPReport], errors: list[dict], verbose: bool = False) -
         f'<meta http-equiv="Content-Security-Policy" content="{csp}">'
         '<meta name="referrer" content="no-referrer">'
         f"<title>{_e(title)}</title>"
-        f"<style>{_asset('leaflet.css')}</style><style>{CSS}</style></head><body>"
+        f"<style>{_asset('leaflet.css')}</style><style>{_asset('report.css')}</style>"
+        "</head><body>"
         f"<header><h1>{_e(title)}</h1>"
         f'<p class="muted">IP Finder {_e(__version__)}, generated {_e(generated)}, '
         f"{len(reports)} address(es)</p>"
         f'<p class="warn">{_e(DISCLAIMER)}</p></header>'
         f"<main>{''.join(sections)}</main>"
-        '<footer class="muted">Map: Leaflet 1.9.4 (BSD 2-Clause) and Natural Earth 1:110m '
-        "(public domain), embedded in this file. Street tiles, if switched on, come from "
-        "OpenStreetMap (&copy; OpenStreetMap contributors).</footer>"
+        f'<footer class="muted">{FOOTER}</footer>'
         f"<script>{leaflet_js}</script>"
         f'<script type="application/json" id="ipf-world">{_world()}</script>'
         f'<script type="application/json" id="ipf-maps">{_script_json(maps)}</script>'
-        f"<script>{MAP_JS}</script>"
+        f"<script>{map_js}</script>"
         "</body></html>\n"
     )

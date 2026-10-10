@@ -166,7 +166,8 @@ def _diagnose(text: str) -> InvalidIPError:
     ):
         return InvalidIPError(
             f"'{shown}' looks like a hostname, not an IP address",
-            "DNS resolution arrives in Phase 3; for now look up the IP, e.g. with 'nslookup'",
+            "IP Finder takes IP addresses only; find the name's address first, "
+            "e.g. with 'nslookup'",
         )
     return InvalidIPError(f"'{shown}' is not a valid IPv4 or IPv6 address")
 

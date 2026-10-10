@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "ip-finder"
-version = "2.0.0a8"
+version = "2.0.0a9"
 description = "Multi-layer IP address intelligence tool (offline analysis, geolocation, network and threat data)"
 readme = "README.md"
 requires-python = ">=3.10"
@@ -25,9 +25,17 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
+# Phase 9 web dashboard: ipfinder serve
+web = [
+    "fastapi>=0.115",
+    "uvicorn>=0.30",
+]
 dev = [
     "pytest>=8.0",
     "ruff>=0.5",
+    # the web dashboard's tests run in CI too
+    "fastapi>=0.115",
+    "uvicorn>=0.30",
 ]
 
 [project.scripts]
@@ -39,6 +47,8 @@ include = ["ipfinder*"]
 [tool.setuptools.package-data]
 # Embedded in HTML reports: Leaflet (BSD-2) and Natural Earth outlines (public domain)
 "ipfinder.output" = ["assets/*"]
+# The web dashboard's page, script and styles
+"ipfinder.web" = ["static/*"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

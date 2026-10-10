@@ -1,0 +1,37 @@
+/* Web dashboard additions to report.css. */
+.panel { background: #fff; border: 1px solid #d9e2ec; border-radius: 8px; padding: 16px;
+         margin: 16px 0; }
+.panel h2 { margin: 0 0 8px; font-size: 18px; }
+.block { display: block; margin-bottom: 6px; font-weight: 600; }
+textarea, input, select, button { font: inherit; }
+textarea { width: 100%; box-sizing: border-box; padding: 8px; border: 1px solid #bcccdc;
+           border-radius: 6px; font-family: ui-monospace, "Cascadia Mono", Menlo, Consolas,
+           monospace; resize: vertical; }
+input:not([type]), input[type="text"], select { padding: 5px 8px; border: 1px solid #bcccdc;
+           border-radius: 6px; background: #fff; }
+.row { display: flex; flex-wrap: wrap; align-items: center; gap: 10px 16px; margin-top: 10px; }
+button, .button-like { padding: 6px 14px; border: 1px solid #9fb3c8; border-radius: 6px;
+           background: #fff; color: #1f2933; cursor: pointer; }
+button:hover:not(:disabled), .button-like:hover { background: #f0f4f8; }
+button:disabled { opacity: .5; cursor: default; }
+button.primary { background: #1d4ed8; border-color: #1d4ed8; color: #fff; font-weight: 600; }
+button.primary:hover:not(:disabled) { background: #1e40af; }
+.button-like input[type="file"] { position: absolute; width: 1px; height: 1px; opacity: 0; }
+.button-like { position: relative; }
+.button-like:focus-within { outline: 2px solid #1d4ed8; outline-offset: 2px; }
+fieldset { margin-top: 12px; border: 1px solid #d9e2ec; border-radius: 6px; }
+legend { font-weight: 600; padding: 0 4px; }
+fieldset .warn { margin: 8px 0; }
+progress { width: 100%; height: 10px; margin-top: 12px; }
+#status { margin: 8px 0 0; min-height: 1.5em; }
+#status.bad { color: #b42318; }
+code { background: #f0f4f8; padding: 1px 4px; border-radius: 4px; }
+table.sources { border-collapse: collapse; width: 100%; margin-top: 8px; font-size: 14px; }
+table.sources th, table.sources td { text-align: left; padding: 4px 8px;
+           border-bottom: 1px solid #d9e2ec; vertical-align: top; }
+table.errors { border-collapse: collapse; }
+footer code { background: none; padding: 0; }
+@media (max-width: 600px) {
+  table.sources th:nth-child(2), table.sources td:nth-child(2),
+  table.sources th:nth-child(3), table.sources td:nth-child(3) { display: none; }
+}

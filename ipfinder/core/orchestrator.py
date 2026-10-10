@@ -129,34 +129,46 @@ async def _prefetch(inputs: list[str], session, providers: list[Provider]) -> li
     return notes
 
 
+async def iter_analyze(inputs: list[str], session, providers: list[Provider] | None = None):
+    """Analyse several inputs and yield each outcome as soon as it is ready:
+    ``(input, IPReport, None)`` or, for invalid input, ``(input, None, error)``.
+    The web dashboard streams these; analyze_many() collects them."""
+    providers = default_providers() if providers is None else providers
+    batch_notes = await _prefetch(inputs, session, providers)
+    for raw in inputs:
+        try:
+            report = await analyze(raw, session, providers)
+        except InvalidIPError as exc:
+            yield raw, None, {"input": raw, "error": exc.message, "hint": exc.hint}
+            continue
+        except ValueError as exc:  # defence in depth: one bad line never sinks a batch
+            error = f"Unparseable input: {display_safe(str(exc))}"
+            yield raw, None, {"input": raw, "error": error, "hint": None}
+            continue
+        report.notes.extend(batch_notes)
+        yield raw, report, None
+
+
 async def analyze_many(
     inputs: list[str], session, providers: list[Provider] | None = None, on_progress=None
 ) -> tuple[list[IPReport], list[dict]]:
     """Analyse several inputs; invalid ones are collected as errors instead of raising.
-    ``on_progress(done, total, input)`` is called after each input (for a progress bar)."""
-    providers = default_providers() if providers is None else providers
-    batch_notes = await _prefetch(inputs, session, providers)
+    ``on_progress(done, total, input)`` is called before each input and once at the
+    end with input None (for a progress bar)."""
     reports: list[IPReport] = []
     errors: list[dict] = []
-    for done, raw in enumerate(inputs, start=1):
-        if on_progress is not None:
-            on_progress(done - 1, len(inputs), raw)
-        try:
-            report = await analyze(raw, session, providers)
-        except InvalidIPError as exc:
-            errors.append({"input": raw, "error": exc.message, "hint": exc.hint})
-            continue
-        except ValueError as exc:  # defence in depth: one bad line never sinks a batch
-            errors.append(
-                {
-                    "input": raw,
-                    "error": f"Unparseable input: {display_safe(str(exc))}",
-                    "hint": None,
-                }
-            )
-            continue
-        report.notes.extend(batch_notes)
-        reports.append(report)
+    total = len(inputs)
+    if on_progress is not None and inputs:
+        on_progress(0, total, inputs[0])
+    done = 0
+    async for _raw, report, error in iter_analyze(inputs, session, providers):
+        if report is not None:
+            reports.append(report)
+        else:
+            errors.append(error)
+        done += 1
+        if on_progress is not None and done < total:
+            on_progress(done, total, inputs[done])
     if on_progress is not None:
-        on_progress(len(inputs), len(inputs), None)
+        on_progress(total, total, None)
     return reports, errors

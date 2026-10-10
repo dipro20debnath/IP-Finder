@@ -1,4 +1,4 @@
-# IP Finder v2 (Phase 0–8)
+# IP Finder v2 (Phase 0–9)
 
 একটি IP address থেকে **আইনসঙ্গতভাবে যা যা জানা সম্ভব**, তা ধাপে ধাপে বের করার Python tool। পুরো roadmap: [ADVANCED_PLAN.md](ADVANCED_PLAN.md)।
 
@@ -13,10 +13,69 @@
 - **Phase 6:** analysis engine (connection type, anycast, location consensus ও confidence, reputation ও exposure score)
 - **Phase 7:** active mode (RTT, traceroute, TLS certificate, speed-of-light check), শুধু `--active` আর confirmation-এর পরে
 - **Phase 8:** reporting (CSV, offline map সহ HTML report, `batch` command, progress bar)
+- **Phase 9:** browser থেকে lookup করার web dashboard (`ipfinder serve`; ঐচ্ছিক)
 
 কোনো API key ছাড়াই চলে; key বা database যোগ করলে আরও source যুক্ত হয়।
 
 > ⚠️ IP geolocation আনুমানিক। একটি IP address কোনো ব্যক্তিকে শনাক্ত করে না।
+
+---
+
+## Phase 9: web dashboard (ঐচ্ছিক)
+
+```bash
+python -m pip install -e ".[web]"   # FastAPI + uvicorn, একবারই
+ipfinder serve                      # terminal-এ http://127.0.0.1:8000/#token=… link দেখায়
+ipfinder serve --open               # browser নিজেই খুলে দেয়
+ipfinder serve --allow-active       # page থেকে active probe (প্রতি lookup-এ phrase লাগবে)
+```
+
+Terminal-এ যে link আসে, সেটা browser-এ খুলুন। Page-এ যা আছে:
+
+- Address লেখার জায়গা। একবারে ১০০টা পর্যন্ত, প্রতি লাইনে একটা, `#` দিয়ে comment। File-ও load করা যায়, UTF-8 বা Windows PowerShell-এর UTF-16।
+- Profile বাছাই (quick / standard / full), আর একটা "My public IP" button।
+- ফল একটা একটা করে আসে, সব address শেষ হওয়ার অপেক্ষা করতে হয় না। সাথে progress bar থাকে। প্রতিটা address-এর card, map আর পুরো report আসে Phase 8-এর HTML report-এর **একই code** থেকে।
+- HTML report, CSV ও JSON download। Lookup আবার চালাতে হয় না, কারণ server শেষ ২০টা lookup মনে রাখে। তাই active probe দ্বিতীয়বার যায় না।
+- Data sources table: কোন source ready, কোনটার জন্য কী লাগবে।
+
+**একই engine:** CLI যে orchestrator, provider, cache আর rate limiter ব্যবহার করে, dashboard-ও ঠিক সেগুলোই ব্যবহার করে। Server চালু থাকা অবস্থায় একটাই session থাকে। ফলে ip-api-র 45/min limit সব tab আর সব lookup মিলিয়ে মানা হয়, আর downloaded list (Tor, cloud…) একবার load হওয়ার পর memory-তে থেকে যায়।
+
+**নিরাপত্তা, আর কেন দরকার:** Dashboard আপনার API key দিয়ে lookup চালায়, আর অনুমতি দিলে target-এ packet পাঠায়। তাই অন্য কেউ বা অন্য কোনো website যেন এটা ব্যবহার করতে না পারে:
+
+1. Default-এ শুধু `127.0.0.1`-এ শোনে, অর্থাৎ শুধু এই computer থেকে খোলা যায়। অন্য computer থেকে দেখাতে চাইলে `--host 0.0.0.0 --allowed-host <আপনার LAN IP>` দিন। তখন tool সতর্ক করে যে connection plain HTTP, তাই token আর ফল network-এ encryption ছাড়া যায়।
+2. প্রতিবার চালু হলে একটা নতুন random token তৈরি হয় (192 bit)। Token থাকে link-এর `#`-এর পরের অংশে, যা browser কখনো server-এ পাঠায় না। ফলে server log-এ token থাকে না। Page সেটা পড়ে address bar থেকে মুছে দেয়, আর প্রতিটা API call-এ header-এ পাঠায়। Token ছাড়া API `401` দেয়।
+3. Host header যাচাই করা হয়। কোনো website নিজের domain-কে `127.0.0.1`-এ point করে দিলেও (DNS rebinding) server উত্তর দেয় না (`400`)।
+4. অন্য site থেকে আসা request (Origin বা Sec-Fetch-Site header দেখে) `403` পায়। CORS নেই, তাই অন্য tab উত্তর পড়তেও পারে না।
+5. Active probe-এর শর্ত CLI-এর মতোই: server `--allow-active` দিয়ে চালু করতে হয়, প্রতিটা lookup-এ হুবহু `I AM AUTHORIZED` লিখতে হয়, সর্বোচ্চ ২০টা address, শুধু public। Test-এ যাচাই করা হয়েছে যে কোনো একটা শর্ত না মিললে probe পর্যন্ত কিছুই পৌঁছায় না।
+6. Content-Security-Policy: script শুধু এই server থেকে আসে। কোনো inline script বা `eval` নেই। Playwright-এর `wait_for_function`-ও এই নিয়মে আটকে গিয়েছিল, যা দেখায় নিয়মটা সত্যিই কাজ করে।
+7. Request body সর্বোচ্চ 256 KB। FastAPI-এর `/docs` বন্ধ, কারণ সেটা CDN থেকে script নামায়।
+
+Map-এর জন্য Phase 8-এর offline Leaflet আর Natural Earth data server নিজেই দেয়। OpenStreetMap-এর রাস্তার layer ঐচ্ছিক। Page `127.0.0.1` থেকে এলে OSM সেটা গ্রহণ করে কিনা নিশ্চিত নয়: forum-এর report পরস্পরবিরোধী, আর এই environment থেকে OSM-এ পৌঁছানোই যায়নি।
+
+**Browser-এ যাচাই:** `scripts/check_dashboard.py` (Playwright লাগে, ঐচ্ছিক) মানুষের মতো করেই পুরো কাজটা করে: `ipfinder serve` চালু করে, Chromium-এ link খোলে, address লিখে "Look up" চাপে, তারপর HTML report download করে আর token ছাড়া page খুলে দেখে। এই repo-তে চালানো ফল:
+
+```text
+status: Done: 2 address(es) in 1.5 s, 1 input(s) were not IP addresses.
+results: 2; maps: 2 of 2 drawn, 844 shapes
+download: ipfinder-20261010-091930.html, 407,610 characters
+without the token: the token form is shown
+OK
+```
+
+Page-এ কোনো error বা CSP violation হয়নি, আর dashboard ছাড়া অন্য কোনো server-এ request যায়নি। আলাদা করে browser-এ আরও যা দেখা হয়েছে:
+- Active mode-এ ভুল phrase দিলে "Nothing was sent", আর ঠিক phrase দিলে probe চলে।
+- UTF-16 file ঠিকভাবে load হয়।
+- 375 px চওড়া phone screen-এও layout ঠিক থাকে।
+
+**কোন version-এ চলে:** দুই প্রান্তেই test pass করেছে:
+- সবচেয়ে পুরোনো যেটা অনুমোদিত: FastAPI 0.115.0 + Starlette 0.38.6 + uvicorn 0.30.0, Python 3.10-এ।
+- এখনকার সর্বশেষ: FastAPI 0.143.0 + Starlette 1.7.0 + uvicorn 0.54.0।
+
+Starlette 1.7-এর TestClient এখন আলাদা `httpx2` package চায়। তাই test-এ httpx-এর নিজের ASGI transport ব্যবহার করা হয়েছে, নতুন কোনো dependency লাগেনি।
+
+![Web dashboard-এর উদাহরণ](docs/dashboard-example.png)
+
+*এই ছবিও MaxMind-এর official **test** database দিয়ে বানানো (81.2.69.142 → London), আসল GeoLite2 দিয়ে নয়। Online source সেই environment থেকে পৌঁছাতে পারেনি।*
 
 ---
 
@@ -484,6 +543,8 @@ source .venv/bin/activate          # Windows: .venv\Scripts\activate
 python -m pip install -e ".[dev]"
 ```
 
+শুধু ব্যবহার করতে চাইলে `python -m pip install -e .` যথেষ্ট। Web dashboard (Phase 9) লাগলে `python -m pip install -e ".[web]"` দিন; `[dev]`-এ এটা আগে থেকেই আছে।
+
 Python **3.10 বা নতুন** লাগবে। Runtime dependency: `rich` (terminal output), `httpx` (HTTP), `dnspython` (Team Cymru-র DNS), `maxminddb` (GeoLite2 file পড়া), আর Windows-এ `tzdata` (time zone)।
 
 ঐচ্ছিক, তবে ভালো ফলের জন্য দরকারি: MaxMind GeoLite2 database (free account লাগে); কীভাবে নামাবেন তা [data/README.md](data/README.md)-তে আছে। IPinfo Lite-এর free token `.env`-এ `IPINFO_TOKEN=` হিসেবে বসান (`.env.example` দেখুন)।
@@ -519,13 +580,14 @@ ipfinder me                               # নিজের public IP
 ipfinder sources                          # প্রতিটা source প্রস্তুত কি না, কী লাগবে
 ipfinder update-lists                     # Tor, cloud, Private Relay, VPN list (+ GeoLite2)
 ipfinder update-lists --status            # কোন list আছে, কত পুরোনো
+ipfinder serve                            # browser-এর জন্য web dashboard (".[web]" লাগে)
 ipfinder cache info                       # cache-এ কী আছে
 ipfinder cache clear                      # cache মুছে ফেলা
 ipfinder                                  # v1.0-এর মতো interactive prompt
 python -m ipfinder 8.8.8.8                # repo folder থেকে, rich install থাকলে
 ```
 
-**Exit codes:** `0` সফল, `1` অন্তত একটি input বৈধ IP নয় (বা `me` নিজের IP খুঁজে পায়নি, বা `update-lists`-এ কোনো list নামানো যায়নি), `2` usage ভুল (ভুল option, input file পড়া যায়নি, output file লেখা যায়নি), `3` internal error, `130` Ctrl+C।
+**Exit codes:** `0` সফল, `1` অন্তত একটি input বৈধ IP নয় (বা `me` নিজের IP খুঁজে পায়নি, বা `update-lists`-এ কোনো list নামানো যায়নি), `2` usage ভুল (ভুল option, input file পড়া যায়নি, output file লেখা যায়নি, `serve`-এর জন্য FastAPI নেই বা port ব্যস্ত), `3` internal error, `130` Ctrl+C।
 
 Report যায় **stdout**-এ। Prompt, status ও error বার্তা যায় **stderr**-এ, তাই `ipfinder -f json > out.json` সবসময় বৈধ JSON দেয়। Input file UTF-8 (BOM সহ বা ছাড়া) বা UTF-16 হতে পারে, যেমন Windows PowerShell-এর তৈরি file।
 
@@ -580,10 +642,11 @@ $ ipfinder fe80::21a:2bff:fe3c:4d5e%eth0
 ```text
 IP-Finder/
 ├── ipfinder/
-│   ├── cli.py                  # argparse CLI (lookup, batch, me, sources, cache, update-lists; --active gate; progress bar)
+│   ├── cli.py                  # argparse CLI (lookup, batch, me, sources, cache, update-lists, serve; --active gate; progress bar)
 │   ├── core/
 │   │   ├── validator.py        # input → validated address, helpful errors
 │   │   ├── text.py             # version-independent IPv6 text, safe display of input
+│   │   ├── inputs.py           # lines → addresses (# comments, UTF-8/UTF-16 files)
 │   │   ├── special_ranges.py   # IANA special-purpose tables + longest-prefix classify
 │   │   ├── models.py           # ProviderResult, IPReport
 │   │   ├── config.py           # .env + environment, API keys, paths, profile
@@ -643,17 +706,21 @@ IP-Finder/
 │   │   ├── scoring.py          # location confidence, reputation, exposure (with breakdown)
 │   │   ├── rtt.py              # speed-of-light check (200 km per ms in fibre)
 │   │   └── verdict.py          # the analysis engine: everything above in one verdict
-│   └── output/
-│       ├── terminal.py         # rich panels (no markup parsing, control characters escaped)
-│       ├── json_out.py
-│       ├── csv_out.py          # one row per address; formula-injection guard
-│       ├── html_report.py      # self-contained report: map, cards, terminal export, strict CSP
-│       └── assets/             # Leaflet 1.9.4 + Natural Earth 1:110m (see assets/README.md)
+│   ├── output/
+│   │   ├── terminal.py         # rich panels (no markup parsing, control characters escaped)
+│   │   ├── json_out.py
+│   │   ├── csv_out.py          # one row per address; formula-injection guard
+│   │   ├── html_report.py      # self-contained report: map, cards, terminal export, strict CSP
+│   │   └── assets/             # Leaflet 1.9.4 + Natural Earth 1:110m, shared map script and styles
+│   └── web/                    # Phase 9 (optional, ".[web]")
+│       ├── app.py              # FastAPI app: token, Host/Origin checks, streamed lookups, downloads
+│       └── static/             # index.html, app.js, app.css (no inline script)
 ├── scripts/
 │   ├── capture_fixtures.py     # Phase 0: record real API responses for tests
 │   ├── build_world_map.py      # Phase 8: rebuild assets/world-110m.json from Natural Earth
-│   └── check_html_report.py    # Phase 8: open a report in Chromium (Playwright) and check the map
-├── docs/html-report-example.png
+│   ├── check_html_report.py    # Phase 8: open a report in Chromium (Playwright) and check the map
+│   └── check_dashboard.py      # Phase 9: start the dashboard and use it in Chromium
+├── docs/                       # screenshots of the HTML report and the dashboard
 ├── tests/                      # pytest; runs offline (fake HTTP + DNS)
 │   └── data/maxmind/           # MaxMind's official test databases (MIT licence)
 ├── data/                       # downloaded databases + cache (git-ignored)
@@ -707,7 +774,8 @@ python scripts/capture_fixtures.py 8.8.8.8 --only ip-api rdap   # IP আগে, 
 | 6 | Connection type, anycast, location consensus ও confidence, reputation ও exposure score | ✅ (প্রতিটা score-এর unit test আছে) |
 | 7 | `--active`: RTT (TCP + ping), traceroute, TLS certificate, speed-of-light check, confirmation, proxy detection | ✅ (`--active` ছাড়া কখনো চলে না, test-এ যাচাই করা) |
 | 8 | CSV, offline map সহ HTML report, `batch` command, progress bar | ✅ (HTML report আসল Chromium-এ disk থেকে খুলে map আঁকা ও শূন্য network request যাচাই করা) |
-| 9–10 | (ঐচ্ছিক) web dashboard, docs ও presentation | ⏳ |
+| 9 | (ঐচ্ছিক) web dashboard: FastAPI + Leaflet, `ipfinder serve` | ✅ (আসল Chromium-এ browser থেকে lookup, map ও download যাচাই করা) |
+| 10 | Docs ও presentation | ⏳ |
 
 `ipfinder sources` চালালে প্রতিটি data source-এর phase ও API-key অবস্থা দেখা যায়।
 
@@ -717,5 +785,6 @@ python scripts/capture_fixtures.py 8.8.8.8 --only ip-api rdap   # IP আগে, 
 
 - Phase 1 পুরোপুরি passive ও offline। কোনো packet কোথাও পাঠায় না।
 - HTML report খুললে কোনো request যায় না (map-এর সব কিছু file-এর ভেতরে)। তাই কে কোন address দেখছে, তা কোনো map বা CDN service জানতে পারে না।
+- Web dashboard default-এ শুধু এই computer থেকে খোলা যায়, আর প্রতিটা API call-এ token লাগে। `--host 0.0.0.0` দিলে connection plain HTTP হয়, তাই শুধু বিশ্বস্ত network-এ ব্যবহার করুন।
 - Active probing (Phase 7) default-এ বন্ধ। `--active` দিলেও স্পষ্ট confirmation (`I AM AUTHORIZED`) ছাড়া চলে না, এক run-এ সর্বোচ্চ ২০টা address, শুধু public address, আর port scan নেই। শুধু নিজের বা লিখিত অনুমতিপ্রাপ্ত system-এ চালান।
 - বাংলাদেশে সাইবার সুরক্ষা অধ্যাদেশ, ২০২৫ প্রযোজ্য; বিস্তারিত [ADVANCED_PLAN.md §9](ADVANCED_PLAN.md#9-security-ethics-ও-আইন)।

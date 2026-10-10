@@ -1,0 +1,98 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>IP Finder</title>
+<link rel="icon" href="data:,">
+<link rel="stylesheet" href="/static/leaflet.css">
+<link rel="stylesheet" href="/static/report.css">
+<link rel="stylesheet" href="/static/app.css">
+<script defer src="/static/leaflet.js"></script>
+<script defer src="/static/ipfinder-map.js"></script>
+<script defer src="/static/app.js"></script>
+</head>
+<body>
+<header>
+  <h1>IP Finder</h1>
+  <p class="muted" id="version">Web dashboard</p>
+  <p class="warn" id="disclaimer">IP geolocation is approximate. An IP address does not identify a person.</p>
+</header>
+<main>
+  <noscript><p class="warn">The dashboard needs JavaScript.</p></noscript>
+
+  <section class="panel" id="token-panel" hidden>
+    <h2>Token needed</h2>
+    <p id="token-reason">Open the link that <code>ipfinder serve</code> printed in your terminal, or paste the token from it here.</p>
+    <form id="token-form" class="row">
+      <input id="token-input" autocomplete="off" spellcheck="false" aria-label="Token" placeholder="token">
+      <button type="submit">Use token</button>
+    </form>
+  </section>
+
+  <section class="panel" id="lookup-panel" hidden>
+    <form id="lookup-form">
+      <label for="addresses" class="block">IP addresses
+        <span class="muted">(one per line; # starts a comment; up to <span id="max-inputs">100</span>)</span></label>
+      <textarea id="addresses" rows="5" spellcheck="false" autocomplete="off"
+        placeholder="8.8.8.8&#10;2001:4860:4860::8888&#10;100.64.1.1"></textarea>
+      <div class="row">
+        <label class="button-like">Load a file…
+          <input type="file" id="file" accept=".txt,.csv,.log,text/plain"></label>
+        <label>Profile
+          <select id="profile">
+            <option value="quick">quick: offline + ip-api</option>
+            <option value="standard">standard: no threat-intel keys</option>
+            <option value="full">full: + threat intelligence</option>
+          </select></label>
+        <label><input type="checkbox" id="verbose"> Python flags and all ranges</label>
+      </div>
+      <fieldset id="active-box">
+        <legend>Active probes</legend>
+        <p id="active-off" class="muted">Off. Start the server with <code>ipfinder serve --allow-active</code> to allow them.</p>
+        <div id="active-on" hidden>
+          <label><input type="checkbox" id="active"> Send packets to the targets (round trip, traceroute, TLS certificate)</label>
+          <p class="warn" id="active-warning"></p>
+          <label>Type <code id="phrase">I AM AUTHORIZED</code> to confirm:
+            <input id="confirmation" autocomplete="off" spellcheck="false" disabled></label>
+        </div>
+      </fieldset>
+      <div class="row">
+        <button type="submit" id="go" class="primary" disabled>Look up</button>
+        <button type="button" id="me" disabled>My public IP</button>
+        <button type="button" id="stop" hidden>Stop</button>
+      </div>
+    </form>
+    <progress id="progress" value="0" max="1" hidden></progress>
+    <p id="status" role="status" aria-live="polite"></p>
+  </section>
+
+  <section class="panel row" id="exports" hidden>
+    <span>Download this lookup:</span>
+    <button type="button" data-format="html">HTML report (with map)</button>
+    <button type="button" data-format="csv">CSV</button>
+    <button type="button" data-format="json">JSON (everything)</button>
+  </section>
+
+  <section class="report" id="errors" hidden>
+    <h2>Inputs that are not IP addresses</h2>
+    <table class="errors"><tbody id="error-rows"></tbody></table>
+  </section>
+  <div id="results"></div>
+
+  <details class="panel" id="sources-panel">
+    <summary>Data sources</summary>
+    <table class="sources">
+      <thead><tr><th>Source</th><th>Layer</th><th>Profiles</th><th>Status</th><th>Needs</th></tr></thead>
+      <tbody id="source-rows"></tbody>
+    </table>
+  </details>
+</main>
+<footer class="muted">
+  Runs on your computer. Lookups use the same sources, cache and rate limits as the
+  <code>ipfinder</code> command. Map: Leaflet 1.9.4 (BSD 2-Clause) and Natural Earth 1:110m
+  (public domain), served by this server. Street tiles, if switched on, come from
+  OpenStreetMap (&copy; OpenStreetMap contributors).
+</footer>
+</body>
+</html>
